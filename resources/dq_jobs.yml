@@ -1,0 +1,70 @@
+# Jobs that run the DQ framework. Each task is a python_wheel_task calling the
+# `dq-run` entry point with a config path; the config's `kind` selects the check.
+resources:
+  jobs:
+
+    # ---- Scheduled endpoint + KPI checks (downstream-app contracts, KPIs) ----
+    dq_scheduled_checks:
+      name: "[DQ] scheduled checks"
+      schedule:
+        # 06:00 UTC daily; paused in dev via bundle `mode: development`.
+        quartz_cron_expression: "0 0 6 * * ?"
+        timezone_id: UTC
+      job_clusters:
+        - job_cluster_key: dq_cluster
+          new_cluster: &dq_cluster
+            spark_version: "15.4.x-scala2.12"
+            node_type_id: "Standard_DS3_v2"
+            num_workers: 1
+            data_security_mode: SINGLE_USER  # Unity Catalog access
+      tasks:
+        - task_key: endpoint_customer_360
+          job_cluster_key: dq_cluster
+          python_wheel_task: &wheel_task
+            package_name: dq_framework
+            entry_point: dq-run
+            parameters:
+              - "--config"
+              - "${workspace.file_path}/configs/endpoints/customer_360.yaml"
+              - "--trigger"
+              - "schedule"
+          libraries: &dq_libs
+            - whl: ./dist/*.whl
+            - pypi:
+                package: databricks-labs-dqx
+
+        - task_key: kpi_revenue
+          job_cluster_key: dq_cluster
+          # KPIs are independent of the endpoint check — run in parallel.
+          python_wheel_task:
+            <<: *wheel_task
+            parameters:
+              - "--config"
+              - "${workspace.file_path}/configs/kpis/revenue.yaml"
+              - "--trigger"
+              - "schedule"
+          libraries: *dq_libs
+
+    # ---- Row-level product checks, standalone scheduled run ----
+    # For inline gating, call run_row_checks() from the product pipeline instead
+    # (see notebooks/example_pipeline_with_dq.py). This job covers the case where
+    # you want a scheduled full-table validation of the product.
+    dq_product_orgstrc:
+      name: "[DQ] rowlevel — orgstrc"
+      schedule:
+        quartz_cron_expression: "0 30 6 * * ?"
+        timezone_id: UTC
+      job_clusters:
+        - job_cluster_key: dq_cluster
+          new_cluster: *dq_cluster
+      tasks:
+        - task_key: rowlevel_orgstrc
+          job_cluster_key: dq_cluster
+          python_wheel_task:
+            <<: *wheel_task
+            parameters:
+              - "--config"
+              - "${workspace.file_path}/configs/products/orgstrc.yaml"
+              - "--trigger"
+              - "schedule"
+          libraries: *dq_libs

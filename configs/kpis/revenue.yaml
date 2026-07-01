@@ -1,0 +1,22 @@
+# KPI ground-truth asserts. Run on refresh / on-demand / on schedule.
+# Expected values + tolerances live in the ground-truth reference table so
+# stewards can update targets without a code change.
+kind: kpi
+target: revenue_kpis
+results_table: prod_auto.gold_virtual.dq_results
+ground_truth_table: prod_auto.gold_virtual.dq_kpi_ground_truth
+
+kpis:
+  - name: total_revenue_2026q2
+    severity: error
+    query: >
+      SELECT sum(amount)
+      FROM prod_auto.gold_virtual.fact_sales
+      WHERE fiscal_quarter = '2026Q2'
+
+  - name: active_customers_2026q2
+    severity: warn
+    query: >
+      SELECT count(DISTINCT customer_id)
+      FROM prod_auto.gold_virtual.fact_sales
+      WHERE fiscal_quarter = '2026Q2'

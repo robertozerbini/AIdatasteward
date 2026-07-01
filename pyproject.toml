@@ -1,0 +1,24 @@
+[project]
+name = "dq_framework"
+version = "0.1.0"
+description = "Unified Databricks data-quality framework (DQX-backed) callable from pipeline notebooks"
+requires-python = ">=3.10"
+dependencies = [
+    "pyyaml",
+    # runtime-only (provided by the Databricks cluster, not installed for unit tests):
+    # "databricks-labs-dqx", "databricks-sdk", "pyspark"
+]
+
+[project.scripts]
+dq-run = "dq_framework.run:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["dq_framework*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

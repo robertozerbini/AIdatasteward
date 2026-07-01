@@ -1,0 +1,30 @@
+# Databricks Asset Bundle — deploys the DQ framework wheel, configs, and the
+# jobs that run the three check kinds. Deploy with:
+#   databricks bundle deploy -t dev
+#   databricks bundle run dq_scheduled_checks -t dev
+bundle:
+  name: dq_framework
+
+# Build the wheel locally; DAB uploads it and rewrites the `whl:` paths below.
+artifacts:
+  dq_wheel:
+    type: whl
+    build: python -m build --wheel
+    path: .
+
+include:
+  - resources/*.yml
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://<your-workspace>.cloud.databricks.com
+
+  prod:
+    mode: production
+    workspace:
+      host: https://<your-workspace>.cloud.databricks.com
+      root_path: /Shared/.bundle/${bundle.name}/${bundle.target}
+    # Pause schedules automatically in dev; run them for real in prod.

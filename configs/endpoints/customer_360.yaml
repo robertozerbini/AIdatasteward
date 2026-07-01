@@ -1,0 +1,28 @@
+# Stored-procedure endpoint consumed by a downstream app. Run on schedule.
+kind: endpoint
+target: sp_customer_360
+results_table: prod_auto.gold_virtual.dq_results
+
+# The proc is executed and its result set is validated.
+execute: "CALL prod_auto.gold_virtual.sp_customer_360()"
+
+result_checks:
+  - name: non_empty
+    type: count
+    severity: error
+    op: ">"
+    value: 0
+
+  - name: expected_contract
+    type: schema
+    severity: error
+    columns:
+      - customer_id
+      - ltv
+      - segment
+
+  - name: fresh_within_24h
+    type: freshness
+    severity: warn
+    column: load_ts
+    max_age_hours: 24

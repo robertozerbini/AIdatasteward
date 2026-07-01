@@ -1,0 +1,20 @@
+# Row-level checks for a data product. Called inline from its pipeline notebook.
+kind: rowlevel
+target: prod_auto.gold_virtual.eudu_mdata_dtac_orgstrc
+
+# Optional: used only when run on a schedule (no DataFrame passed in).
+input:
+  table: prod_auto.gold_virtual.eudu_mdata_dtac_orgstrc
+
+# Where verdicts land (defaults to prod_auto.gold_virtual.dq_results if omitted).
+results_table: prod_auto.gold_virtual.dq_results
+
+# DQX metadata checks. criticality: error -> gates; warn -> records only.
+checks:
+  - name: org_key_is_unique
+    criticality: error
+    check:
+      function: is_unique
+      arguments:
+        columns:
+          - org_key

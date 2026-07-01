@@ -1,0 +1,47 @@
+# Central notification config: WHERE messages go and WHO gets them.
+# Reference from a check config with `notifications: <path-to-this-file>`,
+# pass `notify=` to a facade call, or `--notify` to dq-run.
+#
+# Secrets are referenced as {secret: {scope, key}} and resolved at runtime via
+# Databricks secrets — never put tokens/webhooks in plaintext here.
+
+channels:
+  email:
+    type: email
+    from_addr: dq-bot@yourco.com
+    smtp_host: smtp.yourco.com
+    smtp_port: 587
+    starttls: true
+    user:     {secret: {scope: dq, key: smtp_user}}
+    password: {secret: {scope: dq, key: smtp_password}}
+
+  teams_dq:
+    type: teams
+    webhook: {secret: {scope: dq, key: teams_webhook}}   # Teams incoming webhook URL
+
+  jira_dq:
+    type: jira
+    base_url: https://yourco.atlassian.net
+    project_key: DQ
+    issue_type: Bug
+    user:  {secret: {scope: dq, key: jira_user}}          # Jira account email
+    token: {secret: {scope: dq, key: jira_token}}         # Jira API token
+
+# Routes: WHO to notify for WHICH failures. A route matches a failed result when
+# every key in `match` equals the result's field (empty match = catch-all).
+# A failure can match several routes (e.g. severity + target-specific).
+routes:
+  # Error-severity (gating) failures -> Teams + a Jira ticket + on-call email.
+  - match: {severity: error}
+    channels: [teams_dq, jira_dq, email]
+    email_to: [dq-oncall@yourco.com]
+
+  # Warnings -> Teams + a digest mailbox only (no ticket).
+  - match: {severity: warn}
+    channels: [teams_dq, email]
+    email_to: [dq-digest@yourco.com]
+
+  # Per-target override: the Customer 360 endpoint also pings its owning team.
+  - match: {target: sp_customer_360}
+    channels: [email]
+    email_to: [customer360-team@yourco.com]
