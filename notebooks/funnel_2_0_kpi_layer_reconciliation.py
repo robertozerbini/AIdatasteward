@@ -111,7 +111,9 @@ print(f"Funnel table     : {FUNNEL_TABLE}")
 REGISTRY = [
     # ---------------- Leads ----------------
     ("Leads", "silver", f"{SILVER}.sap_c4c_leads",
-        "DATE(COALESCE(CREATION_DATE, audit_dfd_created_date))",
+        # +4h to match gold's LEAD_CREATION_DATE = TIMESTAMPADD(HOUR,4,...) (UTC->GST),
+        # so window boundaries line up and edge-of-day leads aren't false positives.
+        "DATE(TIMESTAMPADD(HOUR, 4, COALESCE(CREATION_DATE, audit_dfd_created_date)))",
         "SALES_ORGANIZATION", "DIVISION",
         "COUNT(DISTINCT LPAD(COALESCE(C4CLEADID, REPLACE(LEAD_ID,'C4C-','')), 10, '0'))",
         ""),
@@ -137,7 +139,9 @@ REGISTRY = [
 
     # ---------------- Hot Leads ----------------
     ("Hot Leads", "silver", f"{SILVER}.sap_c4c_leads",
-        "DATE(COALESCE(CREATION_DATE, audit_dfd_created_date))",
+        # +4h to match gold's LEAD_CREATION_DATE = TIMESTAMPADD(HOUR,4,...) (UTC->GST),
+        # so window boundaries line up and edge-of-day leads aren't false positives.
+        "DATE(TIMESTAMPADD(HOUR, 4, COALESCE(CREATION_DATE, audit_dfd_created_date)))",
         "SALES_ORGANIZATION", "DIVISION",
         "COUNT(DISTINCT CASE WHEN UPPER(QUALIFICATION) = 'HOT' "
         "THEN LPAD(COALESCE(C4CLEADID, REPLACE(LEAD_ID,'C4C-','')), 10, '0') END)",
@@ -279,12 +283,15 @@ else:
 
 # MAGIC %md
 # MAGIC ## 5. Summary — totals & differences per KPI × sales_organization × division
-# MAGIC - `silver_to_gold_diff` = `gold − silver` — expected transformation shrinkage (dedup / filters).
+# MAGIC - `silver_to_gold_diff` = `gold − silver`; `silver_gold_status` flags any non-zero gap.
+# MAGIC   Note: Silver is raw and approximate, so `CHECK` here is often *expected* — refresh
+# MAGIC   latency between layers, the +4h UTC→GST shift at window edges, `org 5000` / dedup
+# MAGIC   filters, and (Hot Leads) the `pass_to_branch` rule that Silver can't reproduce.
 # MAGIC - `gold_walkin` = walk-in leads the funnel adds from `customer_enquiries_long`
 # MAGIC   (Leads / Hot Leads only; blank elsewhere).
 # MAGIC - `gold_incl_walkin` = `gold + gold_walkin` — the true Gold-side expectation for the funnel.
-# MAGIC - `serve_diff` = `gold_serve − gold_incl_walkin` — the integrity check. Rows flagged
-# MAGIC   `CHECK` are where the funnel still disagrees after accounting for walk-ins.
+# MAGIC - `serve_diff` = `gold_serve − gold_incl_walkin`; `serve_status` is the real integrity
+# MAGIC   check — `CHECK` means the funnel disagrees with Gold after accounting for walk-ins.
 
 # COMMAND ----------
 
@@ -301,6 +308,10 @@ def _num(x):
 
 def _diff(a, b):
     return None if pd.isna(a) or pd.isna(b) else round(b - a, 2)
+
+
+def _status(d):
+    return "n/a" if d is None else ("OK" if d == 0 else "CHECK")
 
 
 def _pct(part, whole):
@@ -323,10 +334,10 @@ def build_summary(pdf):
     piv["gold_incl_walkin"] = [_incl_walkin(g, w)
                                for g, w in zip(piv["gold"], piv["gold_walkin"])]
     piv["silver_to_gold_diff"] = [_diff(s, g) for s, g in zip(piv["silver"], piv["gold"])]
+    piv["silver_gold_status"] = piv["silver_to_gold_diff"].apply(_status)
     piv["serve_diff"] = [_diff(e, gs) for e, gs in zip(piv["gold_incl_walkin"], piv["gold_serve"])]
     piv["serve_match_pct"] = [_pct(gs, e) for e, gs in zip(piv["gold_incl_walkin"], piv["gold_serve"])]
-    piv["status"] = piv["serve_diff"].apply(
-        lambda d: "n/a" if d is None else ("OK" if d == 0 else "CHECK"))
+    piv["serve_status"] = piv["serve_diff"].apply(_status)
     piv["kpi"] = pd.Categorical(piv["kpi"], categories=KPI_ORDER, ordered=True)
     return piv.sort_values(["kpi", "sales_organization", "division"])
 
@@ -334,7 +345,8 @@ if monthly_df is not None:
     totals_pd = monthly_df.toPandas()
     summary = build_summary(totals_pd)
     cols = GROUP_KEYS + ["silver", "gold", "gold_walkin", "gold_incl_walkin", "gold_serve",
-                         "silver_to_gold_diff", "serve_diff", "serve_match_pct", "status"]
+                         "silver_to_gold_diff", "silver_gold_status",
+                         "serve_diff", "serve_match_pct", "serve_status"]
     display(spark.createDataFrame(summary[cols]))
 else:
     print("No results to summarise.")
@@ -356,12 +368,15 @@ if monthly_df is not None:
             rp[lyr] = pd.NA
     rp["gold_incl_walkin"] = [_incl_walkin(g, w) for g, w in zip(rp["gold"], rp["gold_walkin"])]
     rp["silver_to_gold_diff"] = [_diff(s, g) for s, g in zip(rp["silver"], rp["gold"])]
+    rp["silver_gold_status"] = rp["silver_to_gold_diff"].apply(_status)
     rp["serve_diff"] = [_diff(e, gs) for e, gs in zip(rp["gold_incl_walkin"], rp["gold_serve"])]
+    rp["serve_status"] = rp["serve_diff"].apply(_status)
     rp["kpi"] = pd.Categorical(rp["kpi"], categories=KPI_ORDER, ordered=True)
     rp = rp.sort_values("kpi")
     display(spark.createDataFrame(rp[["kpi", "silver", "gold", "gold_walkin",
                                       "gold_incl_walkin", "gold_serve",
-                                      "silver_to_gold_diff", "serve_diff"]]))
+                                      "silver_to_gold_diff", "silver_gold_status",
+                                      "serve_diff", "serve_status"]]))
 else:
     print("No results to roll up.")
 
@@ -514,7 +529,7 @@ DRILL = [
     ("Leads",
      ("silver", f"{SILVER}.sap_c4c_leads",
       "LPAD(COALESCE(C4CLEADID, REPLACE(LEAD_ID,'C4C-','')), 10, '0')",
-      _win("COALESCE(CREATION_DATE, audit_dfd_created_date)")),
+      _win("TIMESTAMPADD(HOUR, 4, COALESCE(CREATION_DATE, audit_dfd_created_date))")),
      ("gold", f"{GOLD}.customer_leads_long", "LEAD_ID", "1=1"),
      ("silver", "SALES_ORGANIZATION", "DIVISION"),
      ("gold", "SALES_ORGANISATION_CODE", "DIVISION"),
@@ -523,7 +538,7 @@ DRILL = [
     ("Hot Leads",
      ("silver", f"{SILVER}.sap_c4c_leads",
       "LPAD(COALESCE(C4CLEADID, REPLACE(LEAD_ID,'C4C-','')), 10, '0')",
-      _win("COALESCE(CREATION_DATE, audit_dfd_created_date)") + " AND UPPER(QUALIFICATION) = 'HOT'"),
+      _win("TIMESTAMPADD(HOUR, 4, COALESCE(CREATION_DATE, audit_dfd_created_date))") + " AND UPPER(QUALIFICATION) = 'HOT'"),
      ("gold", f"{GOLD}.customer_leads_long", "LEAD_ID",
       "(LEAD_QUALIFICATION = 'Hot' OR PASS_TO_BRANCH_TIME IS NOT NULL)"),
      ("silver", "SALES_ORGANIZATION", "DIVISION"),
