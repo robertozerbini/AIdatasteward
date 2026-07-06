@@ -276,4 +276,52 @@ rows to one per key before the join, so the effective relationship is 1 : 1.
   (enquiries depends on leads; the funnel depends on both).
 - **Write mode:** `CREATE OR REPLACE TABLE` (full rebuild each run).
 
+---
+
+## 8. Master data & org-structure enrichment (Sales Office = UNKNOWN)
+
+The funnel's final step resolves each row's organisational labels from the **org-structure master
+data** `eudu_mdata_dtac_orgstrc`, joined on `sales_organization_code · division_code ·
+sales_office_code` (the `org_key` = those three concatenated). This is a *labelling* join — it does
+not change any KPI count — but when the lookup misses, the report shows **`sales_office = 'UNKNOWN'`**
+even though the underlying volumes are correct. It is therefore a **dimension-completeness** issue,
+distinct from the layer-count reconciliation.
+
+**Where it lives (per environment):**
+
+| Env | Master data `eudu_mdata_dtac_orgstrc` | `GET_ORG_KEY` UDF |
+|-----|----------------------------------------|-------------------|
+| dev | `discovery_auto.auto_dev` | `DISCOVERY_AUTO.AUTO_DEV.GET_ORG_KEY` |
+| uat | `discovery_auto.auto_analytics` | `DISCOVERY_AUTO.AUTO_ANALYTICS.GET_ORG_KEY` |
+| prod | `prod_auto.gold_virtual` | (dev UDF reused) |
+
+Supporting master / SAP tables (all in `prod_auto.gold_virtual`): `PAD_100_sales_office_texts`
+(office descriptions, `language_key = 'E'`), `mdata_org_division_brand` (division → brand;
+`GET_ORG_KEY` returns `-99` when it can't resolve), `mdata_org_sales_organization` (org description).
+
+**Root-cause taxonomy** for an `UNKNOWN` sales office (given a usable `sales_office_code`):
+
+| Root cause | Condition | Resolution |
+|-----------|-----------|-----------|
+| **Missing description (record exists)** | master row exists but `business_sales_office_description` is null | `UPDATE` it from `sales_office_description` |
+| **Missing master record (office in SAP)** | office is in `PAD_100_sales_office_texts` but `org_key` not in the master | `INSERT` the row, enriched from SAP (`audit_dfd_created_by = 'DQ_FIX'`) |
+| **Malformed org structure** *(source)* | `GET_ORG_KEY(org, division, NULL) = '-99'` | fix the org/division structure at source |
+| **Office not in SAP texts** *(source)* | office code isn't in `PAD_100_sales_office_texts` | add / correct the office at source |
+
+Rows whose `sales_office_code` is itself **null / blank / `'UNKN'`** (or `division_code = 0`) are a
+separate **source** bucket — not fixable by master-data enrichment.
+
+**Fix runbook (summary).** Apply master-data fixes in **DEV → UAT → PROD** order (align DEV/UAT to
+the PROD master first, and take a PROD backup before touching it). Master-data `UPDATE`/`INSERT`
+statements are generated from the DQ issue views, then after applying them the data products must be
+refreshed **in sequence — Sales Orders → Invoices (New & Used) → `_dy` → Funnel 2.0 report** — before
+the `UNKNOWN` rows clear. Validate by re-checking for duplicate `org_key`s (expect none) and re-running
+the issue check (expect empty).
+
+> The reconciliation notebook implements the detection + classification in **§10 (Master-data
+> completeness)** — it buckets every `UNKNOWN`-sales-office group into the four causes above so you
+> can tell fixable-by-enrichment from source issues before writing any DML.
+
+---
+
 > Companion visual lineage: see `docs/FUNNEL_2_0_LINEAGE.md` for the diagrammatic version.

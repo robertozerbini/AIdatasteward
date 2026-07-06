@@ -50,6 +50,10 @@ dbutils.widgets.text("silver_gold_schema", "prod_auto.gold_virtual", "Silver + G
 dbutils.widgets.text("sales_fact_schema", "prod_auto.gold_serve_virtual", "Gold-Serve fact schema")
 dbutils.widgets.text("funnel_schema_override", "", "Funnel schema override (blank = by env)")
 
+# Master-data (org-structure) check overrides (blank = pick by env)
+dbutils.widgets.text("masterdata_schema", "", "Master-data schema (blank = by env)")
+dbutils.widgets.text("org_key_udf", "", "GET_ORG_KEY function (blank = by env)")
+
 env = dbutils.widgets.get("env")
 start_date = dbutils.widgets.get("start_date")
 end_date = dbutils.widgets.get("end_date")
@@ -72,6 +76,22 @@ SILVER = SILVER_GOLD
 GOLD = SILVER_GOLD
 FUNNEL_TABLE = f"{FUNNEL}.prsls_ldmg_actv_dy"
 
+# Org-structure master data (eudu_mdata_dtac_orgstrc) and the GET_ORG_KEY UDF live per-env.
+# Master data: dev/uat in discovery_auto.*, prod in prod_auto.gold_virtual.
+MDATA_BY_ENV = {
+    "dev":  "discovery_auto.auto_dev",
+    "uat":  "discovery_auto.auto_analytics",
+    "prod": "prod_auto.gold_virtual",
+}
+ORGKEY_BY_ENV = {
+    "dev":  "DISCOVERY_AUTO.AUTO_DEV.GET_ORG_KEY",
+    "uat":  "DISCOVERY_AUTO.AUTO_ANALYTICS.GET_ORG_KEY",
+    "prod": "DISCOVERY_AUTO.AUTO_DEV.GET_ORG_KEY",
+}
+MDATA = dbutils.widgets.get("masterdata_schema").strip() or MDATA_BY_ENV[env]
+GET_ORG_KEY = dbutils.widgets.get("org_key_udf").strip() or ORGKEY_BY_ENV[env]
+MDATA_TABLE = f"{MDATA}.eudu_mdata_dtac_orgstrc"
+
 print(f"Environment      : {env}")
 print(f"Window           : {start_date} .. {end_date}")
 print(f"Filter org       : {filter_org or '(all)'}")
@@ -80,6 +100,8 @@ print(f"Silver schema    : {SILVER}")
 print(f"Gold schema      : {GOLD}")
 print(f"Gold-Serve facts : {FACT}")
 print(f"Funnel table     : {FUNNEL_TABLE}")
+print(f"Master data      : {MDATA_TABLE}")
+print(f"GET_ORG_KEY UDF  : {GET_ORG_KEY}")
 
 # COMMAND ----------
 
@@ -759,6 +781,159 @@ try:
     display(spark.sql(f"SELECT so.* {unattributed_base} LIMIT 50"))
 except Exception as e:
     print("Unattributed reservations FAILED —", str(e).splitlines()[0])
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 10. Master-data completeness — Sales Office = UNKNOWN
+# MAGIC A different class of issue from the layer-count checks above: the KPI volume is correct but a
+# MAGIC **dimension is unresolved**. The funnel's final step enriches each row from the org-structure
+# MAGIC master `eudu_mdata_dtac_orgstrc` (join on `sales_organization_code · division_code ·
+# MAGIC sales_office_code`); when that lookup misses, `sales_office` renders as **`UNKNOWN`** in the
+# MAGIC report even though the underlying counts are fine.
+# MAGIC
+# MAGIC This section finds those rows and classifies each `(org, division, office)` group by root
+# MAGIC cause, so you know which are **fixable by master-data enrichment** vs a **source-data issue**:
+# MAGIC
+# MAGIC | root_cause | meaning | fix |
+# MAGIC |-----------|---------|-----|
+# MAGIC | `Fixable: missing description (record exists)` | master row exists but `business_sales_office_description` is null | `UPDATE` it from `sales_office_description` |
+# MAGIC | `Fixable: missing master record (office in SAP)` | office exists in `PAD_100_sales_office_texts` but not in the master | `INSERT` the row (enrich from SAP) |
+# MAGIC | `Source: malformed org structure (GET_ORG_KEY = -99)` | org/division can't resolve to a division_key | fix org structure at source |
+# MAGIC | `Source: office not in SAP texts` | office code isn't in `PAD_100_sales_office_texts` | fix / add the office at source |
+# MAGIC
+# MAGIC After a master-data fix, the refresh order is **Sales Orders → Invoices (New & Used) → `_dy`
+# MAGIC → report**. Master data & the `GET_ORG_KEY` UDF are per-env (see the parameters cell).
+
+# COMMAND ----------
+
+# The DQ issue set: funnel rows showing UNKNOWN sales_office that DO carry a usable office code
+# (blank / 'UNKN' / division_code 0 are separated out below as source issues, not master-data gaps).
+_md_org = "CAST(sales_organization_code AS STRING)"
+_md_div = "CAST(division_code AS STRING)"
+_md_off = "CAST(sales_office_code AS STRING)"
+_md_of = f"AND {_md_org} = '{filter_org}'" if filter_org else ""
+_md_df = f"AND {_md_div} = '{filter_div}'" if filter_div else ""
+
+# 10a. Overview — of all UNKNOWN-sales_office rows, how many are a master-data gap (code present)
+# vs a source issue (code missing / blank / 'UNKN' / division 0).
+masterdata_overview_sql = f"""
+SELECT
+  CASE
+    WHEN {_md_off} IS NULL OR TRIM({_md_off}) = '' OR UPPER({_md_off}) = 'UNKN'
+         THEN 'Source: sales_office_code missing / blank / UNKN'
+    WHEN {_md_div} = '0' THEN 'Source: division_code = 0'
+    ELSE 'Master-data gap (office code present) — see 10b'
+  END AS bucket,
+  COUNT(*)                                                       AS funnel_rows,
+  COUNT(DISTINCT CONCAT({_md_org}, '|', {_md_div}, '|', COALESCE({_md_off}, ''))) AS distinct_groups
+FROM {FUNNEL_TABLE}
+WHERE UPPER(sales_office) = 'UNKNOWN'
+  AND reporting_date BETWEEN DATE('{start_date}') AND DATE('{end_date}')
+  {_md_of} {_md_df}
+GROUP BY 1
+ORDER BY funnel_rows DESC
+"""
+
+banner(
+    "10a. UNKNOWN Sales Office — overview",
+    how_to_read=[
+        "Every funnel row in the window whose sales_office renders as UNKNOWN, bucketed.",
+        "'Master-data gap' = a usable office code is present, so the fix is master-data (see 10b).",
+        "'Source:' buckets need a source-data fix — the office code itself is missing or malformed."],
+    actions=[
+        "If the master-data-gap bucket dominates, go to 10b and generate the enrichment fixes.",
+        "Source buckets are not fixable by enrichment — raise them with the org-structure owners."])
+try:
+    display(spark.sql(masterdata_overview_sql))
+except Exception as e:
+    print("Master-data overview FAILED —", str(e).splitlines()[0])
+
+# COMMAND ----------
+
+# 10b. Root-cause classification of the master-data-gap groups (code present). Uses the GET_ORG_KEY
+# UDF to detect malformed org structures (-99) and the master + SAP-text tables for existence.
+# Shared CTE (the UNKNOWN groups + their existence flags); the summary and detail selects reuse it.
+_md_enr_cte = f"""
+WITH dq AS (
+  SELECT {_md_org} AS sales_organization_code,
+         {_md_div} AS division_code,
+         {_md_off} AS sales_office_code,
+         COUNT(*)  AS funnel_rows
+  FROM {FUNNEL_TABLE}
+  WHERE UPPER(sales_office) = 'UNKNOWN'
+    AND reporting_date BETWEEN DATE('{start_date}') AND DATE('{end_date}')
+    AND NULLIF(TRIM({_md_off}), '') IS NOT NULL
+    AND UPPER({_md_off}) <> 'UNKN'
+    AND {_md_div} <> '0'
+    {_md_of} {_md_df}
+  GROUP BY 1, 2, 3
+),
+enr AS (
+  SELECT dq.*,
+         CAST({GET_ORG_KEY}(dq.sales_organization_code, dq.division_code, NULL) AS STRING) AS division_key,
+         mst.org_key AS mst_org_key,
+         mst.business_sales_office_description AS mst_bsod,
+         sap.sales_office AS sap_office
+  FROM dq
+  LEFT JOIN {MDATA_TABLE} mst
+    ON mst.org_key = CONCAT(dq.sales_organization_code, dq.division_code, dq.sales_office_code)
+  LEFT JOIN (SELECT DISTINCT sales_office FROM {SILVER}.PAD_100_sales_office_texts
+             WHERE language_key = 'E') sap
+    ON sap.sales_office = dq.sales_office_code
+)"""
+
+# CASE expression shared by both the summary roll-up and the per-group detail.
+_md_root_case = """CASE
+    WHEN division_key = '-99' THEN 'Source: malformed org structure (GET_ORG_KEY = -99)'
+    WHEN mst_org_key IS NOT NULL AND mst_bsod IS NULL
+         THEN 'Fixable: missing description (record exists)'
+    WHEN mst_org_key IS NULL AND sap_office IS NOT NULL
+         THEN 'Fixable: missing master record (office in SAP)'
+    WHEN mst_org_key IS NULL AND sap_office IS NULL
+         THEN 'Source: office not in SAP texts'
+    ELSE 'Other: master record present with description (re-check funnel refresh)'
+  END"""
+
+masterdata_rootcause_sql = f"""{_md_enr_cte}
+SELECT {_md_root_case} AS root_cause,
+       COUNT(*)         AS issue_groups,
+       SUM(funnel_rows) AS funnel_rows
+FROM enr
+GROUP BY 1
+ORDER BY funnel_rows DESC
+"""
+
+# Detail: one row per (org, division, office) group with its classification, for the fix runbook.
+masterdata_detail_sql = f"""{_md_enr_cte}
+SELECT sales_organization_code, division_code, sales_office_code, division_key, funnel_rows,
+       {_md_root_case} AS root_cause
+FROM enr
+ORDER BY funnel_rows DESC
+"""
+
+banner(
+    "10b. UNKNOWN Sales Office — root-cause split",
+    how_to_read=[
+        "The master-data-gap groups from 10a, each classified (see the table in the markdown above).",
+        "'Fixable:' rows are resolved by an UPDATE/INSERT on eudu_mdata_dtac_orgstrc + a funnel refresh.",
+        "'Source:' rows need an org-structure / SAP fix upstream."],
+    actions=[
+        "Fixable-missing-description -> UPDATE business_sales_office_description from sales_office_description.",
+        "Fixable-missing-record -> INSERT the office (enriched from PAD_100_sales_office_texts).",
+        "Then refresh Sales Orders -> Invoices -> _dy -> report and re-run 10a (expect it to shrink).",
+        "The detail table below lists each group to drive those fixes."])
+try:
+    display(spark.sql(masterdata_rootcause_sql))
+    print()
+    banner("10b (detail). Each UNKNOWN Sales Office group with its classification",
+           how_to_read=["One row per (org, division, office) needing attention, most rows first."],
+           actions=["Use the 'Fixable' rows to build the UPDATE / INSERT master-data statements."])
+    display(spark.sql(masterdata_detail_sql))
+except Exception as e:
+    print("Master-data root-cause FAILED —", str(e).splitlines()[0])
+    print("(Check that the GET_ORG_KEY UDF and master-data schema for this env are correct — "
+          "see the org_key_udf / masterdata_schema widgets.)")
 
 # COMMAND ----------
 
