@@ -555,17 +555,23 @@ except Exception as e:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 9c. Unattributed reservations — order-level totals & sample
+# MAGIC ## 9c. Unattributed reservations — root-cause split
 # MAGIC Reservations whose `enquiry_id` finds no match in `customer_enquiries_long` (the funnel's
-# MAGIC `LEFT JOIN` returns null). This matches a manual
-# MAGIC `... LEFT JOIN customer_enquiries_long CE ON SO.enquiry_id = CE.enquiry_id WHERE CE.enquiry_id IS NULL`.
+# MAGIC `LEFT JOIN` returns null), classified by **root cause**:
+# MAGIC - **`enquiry_id` present but not in gold → opportunity-id leakage.** The order references an
+# MAGIC   opportunity/enquiry that never landed in `customer_enquiries_long` (a gap in the enquiries
+# MAGIC   pipeline). `enquiry_id_shape` further flags whether it is `numeric` (a real opportunity id
+# MAGIC   that leaked) or a `non-numeric token` (a constructed `org+office` placeholder like
+# MAGIC   `209226Y211`).
+# MAGIC - **`enquiry_id` null → missing mapping in SAP.** The order was never linked to an
+# MAGIC   opportunity at source (typical for fleet / corporate / direct, since C4C is retail).
 # MAGIC
-# MAGIC **Why the earlier drill's `191 keys / 229 rows` looked off:** that generic anti-join keyed
-# MAGIC on `enquiry_id` and (a) counted **distinct enquiry_id tokens** — but unattributed orders
-# MAGIC reuse a small set of constructed `org+div+office` tokens (`209226Y211`), so the distinct
-# MAGIC count saturates (~191) no matter how many orders there are; and (b) excluded orders with a
-# MAGIC **null/empty `enquiry_id`**. This section fixes both: it counts distinct **`sales_document`**
-# MAGIC (real orders) and **includes** null-enquiry_id orders, so it ties to your query.
+# MAGIC Counts distinct **`sales_document`** (real orders) and `item_quantity`, and **includes**
+# MAGIC null-enquiry_id orders — so it ties to a manual
+# MAGIC `... LEFT JOIN customer_enquiries_long CE ON SO.enquiry_id = CE.enquiry_id WHERE CE.enquiry_id IS NULL`.
+# MAGIC (The earlier drill's `191 keys / 229 rows` was misleading: it counted **distinct enquiry_id
+# MAGIC tokens** — which saturate ~191 because unattributed orders reuse a small set of constructed
+# MAGIC tokens — and excluded null-enquiry_id orders.)
 
 # COMMAND ----------
 
@@ -586,16 +592,24 @@ WHERE UPPER(so.order_type) IN ('ZOR','YOR','TA')
   {_rof2} {_rdf2}
 """
 
-unattributed_totals_sql = f"""
-SELECT COUNT(DISTINCT so.sales_document) AS unattributed_orders,
-       COUNT(*)                         AS order_line_rows,
-       SUM(so.item_quantity)            AS unattributed_item_qty,
-       COUNT(DISTINCT so.enquiry_id)    AS distinct_enquiry_tokens,
-       SUM(CASE WHEN NULLIF(so.enquiry_id, '') IS NULL THEN 1 ELSE 0 END) AS lines_with_null_enquiry_id
+unattributed_rootcause_sql = f"""
+SELECT
+  CASE WHEN NULLIF(so.enquiry_id, '') IS NULL
+       THEN 'Missing mapping in SAP (null enquiry_id)'
+       ELSE 'Opportunity-id leakage (enquiry_id present, not in gold)' END AS root_cause,
+  CASE WHEN NULLIF(so.enquiry_id, '') IS NULL THEN 'n/a'
+       WHEN so.enquiry_id RLIKE '^[0-9]+$' THEN 'numeric (real opportunity id that leaked)'
+       ELSE 'non-numeric token (constructed org+office placeholder)' END AS enquiry_id_shape,
+  COUNT(DISTINCT so.sales_document) AS unattributed_orders,
+  COUNT(*)                         AS order_line_rows,
+  SUM(so.item_quantity)            AS unattributed_item_qty,
+  COUNT(DISTINCT so.enquiry_id)    AS distinct_enquiry_ids
 {unattributed_base}
+GROUP BY 1, 2
+ORDER BY 1, 2
 """
 try:
-    display(spark.sql(unattributed_totals_sql))
+    display(spark.sql(unattributed_rootcause_sql))
     display(spark.sql(f"SELECT so.* {unattributed_base} LIMIT 50"))
 except Exception as e:
     print("Unattributed reservations FAILED —", str(e).splitlines()[0])

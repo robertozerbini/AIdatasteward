@@ -63,6 +63,12 @@ breakdowns (`lost_oppo_*`).
 > but carry no enquiry link. The **`web_attributed_*`** metrics are additionally scoped to
 > **retail / ecommerce only** via the lead back-join filter `sales_group IN ('001','040')`, so
 > fleet / corporate and unattributed reservations are deliberately excluded from web attribution.
+>
+> Unattributed reservations fall into two root causes:
+> - **`enquiry_id` present but not in gold → opportunity-id leakage** — the order references an
+>   opportunity/enquiry that never landed in `customer_enquiries_long` (enquiries-pipeline gap).
+> - **`enquiry_id` null → missing mapping in SAP** — the order was never linked to an
+>   opportunity at source (typical for fleet / corporate / direct).
 
 ### KPI definitions (business logic)
 
