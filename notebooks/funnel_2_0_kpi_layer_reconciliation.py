@@ -318,7 +318,8 @@ def _diff(a, b):
 
 
 def _status(d):
-    return "n/a" if d is None else ("OK" if d == 0 else "CHECK")
+    # None becomes NaN once placed in a float column, so test with pd.isna, not `is None`.
+    return "n/a" if pd.isna(d) else ("OK" if d == 0 else "CHECK")
 
 
 def _pct(part, whole):
@@ -530,8 +531,9 @@ def _dim_filters(org_expr, div_expr):
     return f
 
 # Per KPI: the two key-bearing layers to compare and which directions to sample.
-# left/right = (label, object, key_expr, where_clause). Date/dim filters are applied to the
-# sampled side only; the existence side uses just its structural qualifier.
+# left/right = (label, object, key_expr, where_clause). gdate = the gold date column, used to
+# window the gold (product) side symmetrically in product_only so historical rows outside the
+# analysis window are not flagged as missing.
 DRILL = [
     ("Leads",
      ("silver", f"{SILVER}.sap_c4c_leads",
@@ -540,6 +542,7 @@ DRILL = [
      ("gold", f"{GOLD}.customer_leads_long", "LEAD_ID", "1=1"),
      ("silver", "SALES_ORGANIZATION", "DIVISION"),
      ("gold", "SALES_ORGANISATION_CODE", "DIVISION"),
+     "LEAD_CREATION_DATE",
      ["source_only", "product_only"]),
 
     ("Hot Leads",
@@ -550,6 +553,7 @@ DRILL = [
       "(LEAD_QUALIFICATION = 'Hot' OR PASS_TO_BRANCH_TIME IS NOT NULL)"),
      ("silver", "SALES_ORGANIZATION", "DIVISION"),
      ("gold", "SALES_ORGANISATION_CODE", "DIVISION"),
+     "LEAD_CREATION_DATE",
      ["source_only", "product_only"]),
 
     ("Visits",
@@ -560,6 +564,7 @@ DRILL = [
       "COALESCE(get_json_object(ENQUIRY_INFORMATION,'$.division'), "
       "get_json_object(ENQUIRY_INFORMATION,'$.DIVISION'))"),
      ("gold", "SALES_ORGANISATION_CODE", "DIVISION_CODE"),
+     "ENQUIRY_CREATED_TIME",
      ["source_only", "product_only"]),
 
     ("Test Drives",
@@ -569,6 +574,7 @@ DRILL = [
       "COALESCE(TESTDRIVE_OPEN_TIME, TESTDRIVE_TIME, TESTDRIVE_CANCELLED_TIME) IS NOT NULL"),
      ("silver", "SALES_ORGANIZATION", "DIVISION"),
      ("gold", "SALES_ORGANISATION_CODE", "DIVISION_CODE"),
+     "COALESCE(TESTDRIVE_TIME, TESTDRIVE_CANCELLED_TIME, TESTDRIVE_OPEN_TIME)",
      ["source_only", "product_only"]),
 
     # Total Reservation / Invoices: fact rows that fail to attribute to the product they join to.
@@ -578,6 +584,7 @@ DRILL = [
      ("enquiries", f"{GOLD}.customer_enquiries_long", "ENQUIRY_ID", "1=1"),
      ("gold_serve_fact", "sales_organization", "division"),
      ("enquiries", "SALES_ORGANISATION_CODE", "DIVISION_CODE"),
+     None,
      ["source_only"]),
 
     ("Invoices",
@@ -586,6 +593,7 @@ DRILL = [
      ("orders", f"{FACT}.sales_ordr_vn_d", "sales_document", "1=1"),
      ("gold_serve_fact", "sales_organization_code", "division_key"),
      ("orders", "sales_organization", "division"),
+     None,
      ["source_only"]),
 ]
 
@@ -606,18 +614,19 @@ def anti_sample(title, left, right, n):
         print(f"[{title}]  FAILED — {str(e).splitlines()[0]}")
 
 
-for kpi, left, right, ldim, rdim, directions in DRILL:
+for kpi, left, right, ldim, rdim, gdate, directions in DRILL:
     if SAMPLE_KPI != "All" and SAMPLE_KPI != kpi:
         continue
-    # apply the sampled side's dimension filters
     l_lbl, l_obj, l_key, l_where = left
     r_lbl, r_obj, r_key, r_where = right
-    left_f = (l_lbl, l_obj, l_key, l_where + _dim_filters(ldim[1], ldim[2]))
-    right_f = (r_lbl, r_obj, r_key, r_where + _dim_filters(rdim[1], rdim[2]))
     if "source_only" in directions:
+        # sample windowed silver (+ its dim filters); existence = all-history gold (unbounded)
+        left_f = (l_lbl, l_obj, l_key, l_where + _dim_filters(ldim[1], ldim[2]))
         anti_sample(f"{kpi} · source_only", left_f, right, SAMPLE_N)
     if "product_only" in directions:
-        # sample the product side, existence check against source (source keeps its qualifier only)
-        prod_left = (r_lbl, r_obj, r_key, r_where + _dim_filters(rdim[1], rdim[2]))
-        src_right = (l_lbl, l_obj, l_key, left[3])
+        # sample gold windowed to the SAME analysis window (+ dim filters); existence = windowed
+        # silver (all orgs). Symmetric window prevents historical gold rows being false positives.
+        gold_where = r_where + (f" AND {_win(gdate)}" if gdate else "") + _dim_filters(rdim[1], rdim[2])
+        prod_left = (r_lbl, r_obj, r_key, gold_where)
+        src_right = (l_lbl, l_obj, l_key, l_where)
         anti_sample(f"{kpi} · product_only", prod_left, src_right, SAMPLE_N)
