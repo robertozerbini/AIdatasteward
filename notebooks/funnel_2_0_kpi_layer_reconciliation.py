@@ -511,6 +511,50 @@ except Exception as e:
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## 9b. Total Reservation — attribution & channel breakdown
+# MAGIC Total Reservation counts **all** reservation order types with no `sales_group` filter, so
+# MAGIC it includes retail, fleet and corporate. This splits the item-quantity by:
+# MAGIC - **attribution** — whether the order links to a C4C enquiry (`SO.enquiry_id` found in
+# MAGIC   `customer_enquiries_long`). Unattributed = fleet / corporate / direct, expected because
+# MAGIC   C4C is retail-focused (the `209226Y211`-style `enquiry_id` is a constructed token).
+# MAGIC - **channel_group** — retail/ecom (`sales_group IN ('001','040')`) vs other. The funnel's
+# MAGIC   `web_attributed_*` metrics only apply to retail/ecom leads, so non-retail and
+# MAGIC   unattributed reservations carry **no** web attribution by design.
+
+# COMMAND ----------
+
+_ro, _rd = as_str("sales_organization"), as_str("division")
+_rof = f"AND {_ro} = '{filter_org}'" if filter_org else ""
+_rdf = f"AND {_rd} = '{filter_div}'" if filter_div else ""
+
+reservation_attr_sql = f"""
+SELECT DATE_TRUNC('MONTH', DATE(so.sales_item_creation_date)) AS period,
+       CASE WHEN so.sales_group IN ('001','040') THEN 'retail/ecom'
+            ELSE 'fleet/corporate/other' END AS channel_group,
+       CASE WHEN ce.enquiry_id IS NOT NULL THEN 'attributed (C4C enquiry)'
+            ELSE 'unattributed (no enquiry)' END AS attribution,
+       SUM(so.item_quantity)             AS reservation_items,
+       COUNT(DISTINCT so.sales_document) AS orders
+FROM {FACT}.sales_ordr_vn_d so
+LEFT JOIN (
+    SELECT DISTINCT enquiry_id
+    FROM {GOLD}.customer_enquiries_long
+    WHERE NULLIF(enquiry_id, '') IS NOT NULL
+) ce ON so.enquiry_id = ce.enquiry_id
+WHERE UPPER(so.order_type) IN ('ZOR','YOR','TA')
+  AND DATE(so.sales_item_creation_date) BETWEEN DATE('{start_date}') AND DATE('{end_date}')
+  {_rof} {_rdf}
+GROUP BY 1, 2, 3
+ORDER BY period, channel_group, attribution
+"""
+try:
+    display(spark.sql(reservation_attr_sql))
+except Exception as e:
+    print("Total Reservation attribution breakdown FAILED —", str(e).splitlines()[0])
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC # Granular drill-down — which rows are missing between layers
 # MAGIC For each KPI, sample the actual business keys (with **all attributes**) that exist in one
 # MAGIC layer but not the next — e.g. `lead_id`s in Silver `sap_c4c_leads` that never reach Gold

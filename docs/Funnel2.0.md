@@ -47,12 +47,22 @@ field in `prsls_ldmg_actv_dy`; the funnel notebook builds one stream per KPI fam
 | 2 | **Hot Leads** | `sap_c4c_leads` | `customer_leads_long` | `CUSTOMER_LEADS` | `hot_leads`, `hot_leads_without_walkins` |
 | 3 | **Visits** (opportunities) | `sap_c4c_opportunity_header`, `sap_c4c_opportunity_item` | `customer_enquiries_long` | `CUSTOMER_ENQUIRIES` | `opportunities`, `open_opportunities_14d` |
 | 4 | **Test Drives** | `sap_c4c_follow_up_activities` | `customer_enquiries_long` | `CUSTOMER_TESTDRIVES` | `test_drives_booked`, `test_drives_completed`, `test_drives_oepn`, `test_drives_noshow`, `test_drives_cancelled` |
-| 5 | **Orders** | — | — | `CUSTOMER_ORDERS` ← `sales_ordr_vn_d` | `orders`, `total_order_items`, `orders_with_deposite`, `reservation_items_*` |
+| 5 | **Total Reservation** | — | — | `CUSTOMER_ORDERS` ← `sales_ordr_vn_d` | `total_order_items` (SUM item_quantity), `orders`, `orders_with_deposite`, `reservation_items_*` |
 | 6 | **Invoices** | — | — | `CUSTOMER_INVOICES` ← `sales_newu_usud_sals_vn_d_view` | `invoices` |
 
 Every KPI also has a **`web_attributed_*`** counterpart (web/social origin, plus walk-ins
 recovered by the mobile-number back-join), and enquiries carry **lost-opportunity** reason
 breakdowns (`lost_oppo_*`).
+
+> **Attribution scope.** Total Reservation (`total_order_items`) and Invoices count **all**
+> reservation order types (`ZOR`/`YOR`/`TA` = Standard / Fleet / AFM Corporate) with **no
+> `sales_group` filter**, so they include retail, fleet and corporate. The enquiry join
+> (`sales_ordr_vn_d.enquiry_id → customer_enquiries_long`) is `LEFT`, so orders with no C4C
+> enquiry — fleet / corporate / direct, whose `enquiry_id` is a constructed `org+div+office`
+> token like `209226Y211`, expected because **C4C is retail-focused** — still count in the KPI
+> but carry no enquiry link. The **`web_attributed_*`** metrics are additionally scoped to
+> **retail / ecommerce only** via the lead back-join filter `sales_group IN ('001','040')`, so
+> fleet / corporate and unattributed reservations are deliberately excluded from web attribution.
 
 ### KPI definitions (business logic)
 
