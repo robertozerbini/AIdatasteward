@@ -11,10 +11,10 @@
 # MAGIC | Leads / Hot Leads | `sap_c4c_leads` | `customer_leads_long` | `prsls_ldmg_actv_dy.leads / hot_leads` |
 # MAGIC | Visits | `sap_c4c_opportunity_header` | `customer_enquiries_long` | `…opportunities` |
 # MAGIC | Test Drives | `sap_c4c_follow_up_activities` | `customer_enquiries_long` | `…test_drives_booked` |
-# MAGIC | Orders | — | `sales_ordr_vn_d` * | `…orders` |
+# MAGIC | Total Reservation | — | `sales_ordr_vn_d` * | `…total_order_items` |
 # MAGIC | Invoices | — | `sales_newu_usud_sals_vn_d_view` * | `…invoices` |
 # MAGIC
-# MAGIC \* Orders and Invoices have no separate curated Gold product — the serving fact tables
+# MAGIC \* Total Reservation and Invoices have no separate curated Gold product — the serving fact tables
 # MAGIC are their upstream, so they populate the "Gold" column here.
 # MAGIC
 # MAGIC **Expected divergence:** Silver → Gold naturally shrinks (dedup to latest row per key,
@@ -198,16 +198,19 @@ REGISTRY = [
         "SUM(test_drives_booked)",
         ""),
 
-    # ---------------- Orders (no separate Gold product; fact = upstream) ----------------
-    ("Orders", "gold", f"{FACT}.sales_ordr_vn_d",
+    # ---------------- Total Reservation (SUM of reservation item quantities) ----------------
+    # SAP def: SUM(item_quantity) where sales_item_creation_date is in the period and
+    # order_type IN ('ZOR','YOR','TA') = Standard Order / Fleet Order / AFM Corporate Order.
+    # In the funnel this is the additive `total_order_items` column.
+    ("Total Reservation", "gold", f"{FACT}.sales_ordr_vn_d",
         "DATE(sales_item_creation_date)",
         "sales_organization", "division",
-        "COUNT(DISTINCT sales_document)",
+        "SUM(item_quantity)",
         "AND UPPER(order_type) IN ('ZOR','YOR','TA')"),
-    ("Orders", "gold_serve", FUNNEL_TABLE,
+    ("Total Reservation", "gold_serve", FUNNEL_TABLE,
         "reporting_date",
         "sales_organization_code", "division_code",
-        "SUM(orders)",
+        "SUM(total_order_items)",
         ""),
 
     # ---------------- Invoices (no separate Gold product; fact = upstream) ----------------
@@ -287,7 +290,7 @@ else:
 
 import pandas as pd
 
-KPI_ORDER = ["Leads", "Hot Leads", "Visits", "Test Drives", "Orders", "Invoices"]
+KPI_ORDER = ["Leads", "Hot Leads", "Visits", "Test Drives", "Total Reservation", "Invoices"]
 LAYERS = ["silver", "gold", "gold_walkin", "gold_serve"]
 GROUP_KEYS = ["kpi", "sales_organization", "division"]
 
@@ -407,16 +410,11 @@ display(ref_df.orderBy("kpi", "layer"))
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 9. Orders double-count diagnostic
-# MAGIC The funnel's `orders` = `COUNT(DISTINCT sales_document)` summed across its dimension
-# MAGIC groups — which include `model_code` — so a multi-model order is counted once per model.
-# MAGIC This compares, per org × division × month:
-# MAGIC - `distinct_orders` — globally distinct `sales_document` (a true order count)
-# MAGIC - `order_x_model` — distinct `sales_document × model_code` (mirrors the funnel grain)
-# MAGIC - `funnel_orders` — `SUM(orders)` from the funnel table
-# MAGIC
-# MAGIC `multi_model_inflation = order_x_model − distinct_orders` explains the bulk of the gap;
-# MAGIC `residual = funnel_orders − order_x_model` is any extra fan-out from the enquiry join.
+# MAGIC ## 9. Total Reservation — monthly validation
+# MAGIC `SUM(item_quantity)` for reservation order types (`ZOR`/`YOR`/`TA` = Standard / Fleet /
+# MAGIC AFM Corporate Order) by `sales_item_creation_date`, at the fact vs the funnel
+# MAGIC (`total_order_items`). Use this to tie out against the SAP figure — e.g. **May 2026 = 3620**
+# MAGIC for the selected org. `distinct_orders` is shown only as context (order headers, not the KPI).
 
 # COMMAND ----------
 
@@ -427,44 +425,38 @@ _fdf = f"AND {_fact_div} = '{filter_div}'" if filter_div else ""
 _uof = f"AND {_fun_org} = '{filter_org}'" if filter_org else ""
 _udf = f"AND {_fun_div} = '{filter_div}'" if filter_div else ""
 
-orders_diag_sql = f"""
+reservation_sql = f"""
 WITH fact AS (
-  SELECT {_fact_org} AS sales_organization, {_fact_div} AS division,
-         DATE_TRUNC('MONTH', DATE(sales_item_creation_date)) AS period,
-         COUNT(DISTINCT sales_document)                                        AS distinct_orders,
-         COUNT(DISTINCT CONCAT(sales_document, '|', COALESCE(model_code, ''))) AS order_x_model
+  SELECT DATE_TRUNC('MONTH', DATE(sales_item_creation_date)) AS period,
+         SUM(item_quantity)             AS fact_reservation,
+         COUNT(DISTINCT sales_document) AS distinct_orders
   FROM {FACT}.sales_ordr_vn_d
   WHERE UPPER(order_type) IN ('ZOR','YOR','TA')
     AND DATE(sales_item_creation_date) BETWEEN DATE('{start_date}') AND DATE('{end_date}')
     {_fof} {_fdf}
-  GROUP BY 1, 2, 3
+  GROUP BY 1
 ),
 funnel AS (
-  SELECT {_fun_org} AS sales_organization, {_fun_div} AS division,
-         DATE_TRUNC('MONTH', reporting_date) AS period,
-         SUM(orders) AS funnel_orders
+  SELECT DATE_TRUNC('MONTH', reporting_date) AS period,
+         SUM(total_order_items) AS funnel_reservation
   FROM {FUNNEL_TABLE}
   WHERE reporting_date BETWEEN DATE('{start_date}') AND DATE('{end_date}')
     {_uof} {_udf}
-  GROUP BY 1, 2, 3
+  GROUP BY 1
 )
-SELECT COALESCE(f.sales_organization, u.sales_organization) AS sales_organization,
-       COALESCE(f.division, u.division)                     AS division,
-       COALESCE(f.period, u.period)                         AS period,
-       f.distinct_orders, f.order_x_model, u.funnel_orders,
-       f.order_x_model - f.distinct_orders AS multi_model_inflation,
-       u.funnel_orders - f.order_x_model   AS residual
+SELECT COALESCE(f.period, u.period) AS period,
+       f.fact_reservation,
+       u.funnel_reservation,
+       u.funnel_reservation - f.fact_reservation AS diff,
+       f.distinct_orders
 FROM fact f
-FULL OUTER JOIN funnel u
-  ON f.sales_organization = u.sales_organization
- AND f.division = u.division
- AND f.period = u.period
-ORDER BY sales_organization, division, period
+FULL OUTER JOIN funnel u ON f.period = u.period
+ORDER BY period
 """
 try:
-    display(spark.sql(orders_diag_sql))
+    display(spark.sql(reservation_sql))
 except Exception as e:
-    print("Orders diagnostic FAILED —", str(e).splitlines()[0])
+    print("Total Reservation validation FAILED —", str(e).splitlines()[0])
 
 # COMMAND ----------
 
@@ -476,7 +468,7 @@ except Exception as e:
 # MAGIC
 # MAGIC **Scope of key-level anti-joins**
 # MAGIC - **Silver ↔ Gold** — full key-level comparison (both carry the business key).
-# MAGIC - **Orders / Invoices** — fact rows that fail to attribute (fact key not found in the
+# MAGIC - **Total Reservation / Invoices** — fact rows that fail to attribute (fact key not found in the
 # MAGIC   product it joins to).
 # MAGIC - **Gold ↔ Gold-Serve** — *not available at key level*: `prsls_ldmg_actv_dy` is a
 # MAGIC   pre-aggregated table with no `lead_id` / `enquiry_id`. Use the group-grain checks in
@@ -496,7 +488,7 @@ except Exception as e:
 dbutils.widgets.text("granular_sample_rows", "20", "Drill-down: sample rows per anti-join")
 dbutils.widgets.dropdown(
     "granular_sample_kpi", "All",
-    ["All", "Leads", "Hot Leads", "Visits", "Test Drives", "Orders", "Invoices"],
+    ["All", "Leads", "Hot Leads", "Visits", "Test Drives", "Total Reservation", "Invoices"],
     "Drill-down: KPI")
 
 SAMPLE_N = int(dbutils.widgets.get("granular_sample_rows") or "20")
@@ -557,8 +549,8 @@ DRILL = [
      ("gold", "SALES_ORGANISATION_CODE", "DIVISION_CODE"),
      ["source_only", "product_only"]),
 
-    # Orders / Invoices: fact rows that fail to attribute to the product they join to.
-    ("Orders",
+    # Total Reservation / Invoices: fact rows that fail to attribute to the product they join to.
+    ("Total Reservation",
      ("gold_serve_fact", f"{FACT}.sales_ordr_vn_d", "enquiry_id",
       _win("sales_item_creation_date") + " AND UPPER(order_type) IN ('ZOR','YOR','TA') AND NULLIF(enquiry_id,'') IS NOT NULL"),
      ("enquiries", f"{GOLD}.customer_enquiries_long", "ENQUIRY_ID", "1=1"),
