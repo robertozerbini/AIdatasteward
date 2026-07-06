@@ -84,6 +84,11 @@ print(f"Funnel table     : {FUNNEL_TABLE}")
 # MAGIC `brand_code`, nested structs, lookups), so Silver-vs-Gold splits by org/division will
 # MAGIC not tie out exactly. The reliable integrity check is **Gold → Gold-Serve**.
 # MAGIC
+# MAGIC **Timezone:** all Silver C4C timestamps are **UTC**; Gold shifts them to Dubai (GST,
+# MAGIC UTC+4) via `TIMESTAMPADD(HOUR, 4, …)`. Every Silver date expression below applies the
+# MAGIC same +4h so the reporting window lines up with Gold / Gold-Serve. (Gold-Serve fact dates
+# MAGIC — `sales_item_creation_date`, `day` — are already business-local and are used as-is.)
+# MAGIC
 # MAGIC Per-object dimension columns used below:
 # MAGIC
 # MAGIC | Object | sales_organization | division |
@@ -166,7 +171,8 @@ REGISTRY = [
 
     # ---------------- Visits (opportunities) ----------------
     ("Visits", "silver", f"{SILVER}.sap_c4c_opportunity_header",
-        "DATE(COALESCE(creationDate, audit_dfd_created_date))",
+        # Silver C4C timestamps are UTC -> +4h to Dubai (GST), matching gold.
+        "DATE(TIMESTAMPADD(HOUR, 4, COALESCE(creationDate, audit_dfd_created_date)))",
         "ORGID",
         # ENQUIRY_INFORMATION is a raw JSON string on Silver (struct only after from_json cast)
         "COALESCE(get_json_object(ENQUIRY_INFORMATION,'$.division'), "
@@ -186,7 +192,8 @@ REGISTRY = [
 
     # ---------------- Test Drives (booked) ----------------
     ("Test Drives", "silver", f"{SILVER}.sap_c4c_follow_up_activities",
-        "DATE(audit_dfd_created_date)",
+        # Silver C4C timestamps are UTC -> +4h to Dubai (GST), matching gold.
+        "DATE(TIMESTAMPADD(HOUR, 4, audit_dfd_created_date))",
         "SALES_ORGANIZATION", "DIVISION",
         "COUNT(DISTINCT CASE WHEN SUBJECT_TYPE LIKE 'Test Drive%' THEN OPPORTUNITYID END)",
         ""),
@@ -547,7 +554,7 @@ DRILL = [
 
     ("Visits",
      ("silver", f"{SILVER}.sap_c4c_opportunity_header", "LPAD(ID, 10, '0')",
-      _win("COALESCE(creationDate, audit_dfd_created_date)")),
+      _win("TIMESTAMPADD(HOUR, 4, COALESCE(creationDate, audit_dfd_created_date))")),
      ("gold", f"{GOLD}.customer_enquiries_long", "ENQUIRY_ID", "1=1"),
      ("silver", "ORGID",
       "COALESCE(get_json_object(ENQUIRY_INFORMATION,'$.division'), "
@@ -557,7 +564,7 @@ DRILL = [
 
     ("Test Drives",
      ("silver", f"{SILVER}.sap_c4c_follow_up_activities", "LPAD(OPPORTUNITYID, 10, '0')",
-      _win("audit_dfd_created_date") + " AND SUBJECT_TYPE LIKE 'Test Drive%' AND NULLIF(OPPORTUNITYID,'') IS NOT NULL"),
+      _win("TIMESTAMPADD(HOUR, 4, audit_dfd_created_date)") + " AND SUBJECT_TYPE LIKE 'Test Drive%' AND NULLIF(OPPORTUNITYID,'') IS NOT NULL"),
      ("gold", f"{GOLD}.customer_enquiries_long", "ENQUIRY_ID",
       "COALESCE(TESTDRIVE_OPEN_TIME, TESTDRIVE_TIME, TESTDRIVE_CANCELLED_TIME) IS NOT NULL"),
      ("silver", "SALES_ORGANIZATION", "DIVISION"),
