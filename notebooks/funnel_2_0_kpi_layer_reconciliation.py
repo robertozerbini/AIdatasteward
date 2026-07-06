@@ -290,15 +290,18 @@ else:
 
 # MAGIC %md
 # MAGIC ## 5. Summary — totals & differences per KPI × sales_organization × division
-# MAGIC - `silver_to_gold_diff` = `gold − silver`; `silver_gold_status` flags any non-zero gap.
-# MAGIC   Note: Silver is raw and approximate, so `CHECK` here is often *expected* — refresh
-# MAGIC   latency between layers, the +4h UTC→GST shift at window edges, `org 5000` / dedup
-# MAGIC   filters, and (Hot Leads) the `pass_to_branch` rule that Silver can't reproduce.
-# MAGIC - `gold_walkin` = walk-in leads the funnel adds from `customer_enquiries_long`
-# MAGIC   (Leads / Hot Leads only; blank elsewhere).
-# MAGIC - `gold_incl_walkin` = `gold + gold_walkin` — the true Gold-side expectation for the funnel.
-# MAGIC - `serve_diff` = `gold_serve − gold_incl_walkin`; `serve_status` is the real integrity
-# MAGIC   check — `CHECK` means the funnel disagrees with Gold after accounting for walk-ins.
+# MAGIC **`final_status`** is the single verdict: does all the KPI's information land in
+# MAGIC **Gold-Serve** (the funnel)? `OK` = the funnel matches Gold (incl. walk-ins); `CHECK` =
+# MAGIC it doesn't and needs investigation; `n/a` = nothing to compare.
+# MAGIC
+# MAGIC **`note`** flags anything to verify without failing the row — chiefly silver↔gold
+# MAGIC differences, which are usually *expected* (dedup, +4h UTC→GST edge, division
+# MAGIC reclassification, refresh latency, or Hot-Leads' `pass_to_branch` rule that Silver can't
+# MAGIC reproduce). A silver↔gold gap does **not** by itself mean data is missing — confirm with
+# MAGIC the key-level drill-down at the bottom (e.g. Leads `source_only = 0`).
+# MAGIC
+# MAGIC Supporting columns: `gold_walkin` (walk-ins the funnel adds, Leads/Hot Leads only),
+# MAGIC `gold_incl_walkin` = `gold + gold_walkin`, `serve_diff` = `gold_serve − gold_incl_walkin`.
 
 # COMMAND ----------
 
@@ -332,6 +335,23 @@ def _incl_walkin(g, w):
     return pd.NA if (pd.isna(g) and pd.isna(w)) else round(_num(g) + _num(w), 2)
 
 
+def _row_note(row):
+    """Warnings / things to verify for a row. Empty string when nothing to flag."""
+    parts = []
+    sd = row.get("serve_diff")
+    s2g = row.get("silver_to_gold_diff")
+    silver, gold = row.get("silver"), row.get("gold")
+    if not pd.isna(sd) and sd != 0:
+        parts.append(f"VERIFY: funnel differs from gold by {sd:+.0f}")
+    if not pd.isna(s2g) and s2g != 0:
+        if not pd.isna(silver) and silver == 0 and not pd.isna(gold) and gold > 0:
+            parts.append("silver cannot reproduce this KPI (informational)")
+        else:
+            parts.append(f"silver vs gold off by {s2g:+.0f} "
+                         "(informational: dedup / division reclassification / refresh latency)")
+    return "; ".join(parts)
+
+
 def build_summary(pdf):
     piv = pdf.pivot_table(index=GROUP_KEYS, columns="layer",
                           values="value", aggfunc="sum").reset_index()
@@ -342,10 +362,12 @@ def build_summary(pdf):
     piv["gold_incl_walkin"] = [_incl_walkin(g, w)
                                for g, w in zip(piv["gold"], piv["gold_walkin"])]
     piv["silver_to_gold_diff"] = [_diff(s, g) for s, g in zip(piv["silver"], piv["gold"])]
-    piv["silver_gold_status"] = piv["silver_to_gold_diff"].apply(_status)
     piv["serve_diff"] = [_diff(e, gs) for e, gs in zip(piv["gold_incl_walkin"], piv["gold_serve"])]
     piv["serve_match_pct"] = [_pct(gs, e) for e, gs in zip(piv["gold_incl_walkin"], piv["gold_serve"])]
-    piv["serve_status"] = piv["serve_diff"].apply(_status)
+    # final_status = does all the information land in Gold-Serve (the funnel)? This is the
+    # single headline verdict. Silver<->Gold differences are surfaced as `note`, not a fail.
+    piv["final_status"] = piv["serve_diff"].apply(_status)
+    piv["note"] = piv.apply(_row_note, axis=1)
     piv["kpi"] = pd.Categorical(piv["kpi"], categories=KPI_ORDER, ordered=True)
     return piv.sort_values(["kpi", "sales_organization", "division"])
 
@@ -353,9 +375,14 @@ if monthly_df is not None:
     totals_pd = monthly_df.toPandas()
     summary = build_summary(totals_pd)
     cols = GROUP_KEYS + ["silver", "gold", "gold_walkin", "gold_incl_walkin", "gold_serve",
-                         "silver_to_gold_diff", "silver_gold_status",
-                         "serve_diff", "serve_match_pct", "serve_status"]
+                         "silver_to_gold_diff", "serve_diff", "serve_match_pct",
+                         "final_status", "note"]
     display(spark.createDataFrame(summary[cols]))
+
+    checks = summary[summary["final_status"] == "CHECK"]
+    warns = summary[(summary["final_status"] != "CHECK") & (summary["note"] != "")]
+    print(f"final_status = CHECK (funnel != gold): {len(checks)} row(s)")
+    print(f"OK with a note to verify: {len(warns)} row(s)")
 else:
     print("No results to summarise.")
 
@@ -376,15 +403,15 @@ if monthly_df is not None:
             rp[lyr] = pd.NA
     rp["gold_incl_walkin"] = [_incl_walkin(g, w) for g, w in zip(rp["gold"], rp["gold_walkin"])]
     rp["silver_to_gold_diff"] = [_diff(s, g) for s, g in zip(rp["silver"], rp["gold"])]
-    rp["silver_gold_status"] = rp["silver_to_gold_diff"].apply(_status)
     rp["serve_diff"] = [_diff(e, gs) for e, gs in zip(rp["gold_incl_walkin"], rp["gold_serve"])]
-    rp["serve_status"] = rp["serve_diff"].apply(_status)
+    rp["final_status"] = rp["serve_diff"].apply(_status)
+    rp["note"] = rp.apply(_row_note, axis=1)
     rp["kpi"] = pd.Categorical(rp["kpi"], categories=KPI_ORDER, ordered=True)
     rp = rp.sort_values("kpi")
     display(spark.createDataFrame(rp[["kpi", "silver", "gold", "gold_walkin",
                                       "gold_incl_walkin", "gold_serve",
-                                      "silver_to_gold_diff", "silver_gold_status",
-                                      "serve_diff", "serve_status"]]))
+                                      "silver_to_gold_diff", "serve_diff",
+                                      "final_status", "note"]]))
 else:
     print("No results to roll up.")
 
