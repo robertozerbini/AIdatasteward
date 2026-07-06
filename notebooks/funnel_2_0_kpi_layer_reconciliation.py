@@ -12,10 +12,16 @@
 # MAGIC | Visits | `sap_c4c_opportunity_header` | `customer_enquiries_long` | `…opportunities` |
 # MAGIC | Test Drives | `sap_c4c_follow_up_activities` | `customer_enquiries_long` | `…test_drives_booked` |
 # MAGIC | Total Reservation | — | `sales_ordr_vn_d` * | `…total_order_items` |
-# MAGIC | Invoices | — | `sales_newu_usud_sals_vn_d_view` * | `…invoices` |
+# MAGIC | Invoices | `PAD_100_billing_details_new` | `sales_newu_usud_sals_vn_d_view` ** | `…invoices` |
 # MAGIC
-# MAGIC \* Total Reservation and Invoices have no separate curated Gold product — the serving fact tables
-# MAGIC are their upstream, so they populate the "Gold" column here.
+# MAGIC \* Total Reservation has no separate curated Gold product — the serving fact `sales_ordr_vn_d`
+# MAGIC is its upstream, so it populates the "Gold" column here.
+# MAGIC
+# MAGIC \*\* Invoices *do* have a curated Gold data product: `sales_newu_sals_vn_d` (new units) +
+# MAGIC `sales_usdu_sals_vn_d` (used units), UNION-ed into `sales_newu_usud_sals_vn_d_view`. Both are
+# MAGIC built from the billing-detail Silver table with `invoices = SUM(sales_volume_quantity)` at
+# MAGIC `billing_date`, deduped via `flag_cancellation = 0`. Silver here is the raw billing lines, so
+# MAGIC Silver → Gold shrinks (cancellation dedup + org / sales_group / billing_type filters).
 # MAGIC
 # MAGIC **Expected divergence:** Silver → Gold naturally shrinks (dedup to latest row per key,
 # MAGIC `sales_organisation <> '5000'`, date filters). Gold → Gold-Serve should reconcile closely;
@@ -126,10 +132,12 @@ COLUMN_LEGEND = [
 # MAGIC `brand_code`, nested structs, lookups), so Silver-vs-Gold splits by org/division will
 # MAGIC not tie out exactly. The reliable integrity check is **Gold → Gold-Serve**.
 # MAGIC
-# MAGIC **Timezone:** all Silver C4C timestamps are **UTC**; Gold shifts them to Dubai (GST,
-# MAGIC UTC+4) via `TIMESTAMPADD(HOUR, 4, …)`. Every Silver date expression below applies the
+# MAGIC **Timezone:** all Silver **C4C** timestamps are **UTC**; Gold shifts them to Dubai (GST,
+# MAGIC UTC+4) via `TIMESTAMPADD(HOUR, 4, …)`. Every C4C Silver date expression below applies the
 # MAGIC same +4h so the reporting window lines up with Gold / Gold-Serve. (Gold-Serve fact dates
 # MAGIC — `sales_item_creation_date`, `day` — are already business-local and are used as-is.)
+# MAGIC **Exception:** the Invoices Silver source (`PAD_100_billing_details_new.billing_date`) is an
+# MAGIC SAP **business date**, not a UTC event timestamp, so it takes **no +4h shift**.
 # MAGIC
 # MAGIC Per-object dimension columns used below:
 # MAGIC
@@ -141,6 +149,7 @@ COLUMN_LEGEND = [
 # MAGIC | `customer_leads_long` | `SALES_ORGANISATION_CODE` | `DIVISION` |
 # MAGIC | `customer_enquiries_long` | `SALES_ORGANISATION_CODE` | `DIVISION_CODE` |
 # MAGIC | `sales_ordr_vn_d` | `sales_organization` | `division` |
+# MAGIC | `PAD_100_billing_details_new` (Invoices Silver) | `sales_organization` | `division` |
 # MAGIC | `sales_newu_usud_sals_vn_d_view` | `sales_organization_code` | `division_key` |
 # MAGIC | `prsls_ldmg_actv_dy` | `sales_organization_code` | `division_code` |
 
@@ -266,10 +275,26 @@ REGISTRY = [
         "SUM(total_order_items)",
         ""),
 
-    # ---------------- Invoices (no separate Gold product; fact = upstream) ----------------
+    # ---------------- Invoices ----------------
+    # Gold data product: sales_newu_sals_vn_d (new, channel 10) + sales_usdu_sals_vn_d (used,
+    # channel 20), UNION-ed into sales_newu_usud_sals_vn_d_view. Both are built from the billing
+    # detail table below; invoices = SUM(sales_volume_quantity) at billing_date, deduped via
+    # flag_cancellation and filtered on org / sales_group / billing_type.
+    # Silver = raw billing lines (approximate): no cancellation dedup, no product filters, so
+    # Silver > Gold is expected — the same dedup/filter shrinkage as the other KPIs.
+    # NOTE: billing_date is an SAP business date (already local) — NOT a UTC C4C timestamp — so
+    # no +4h shift here, unlike the sap_c4c_* silver tables.
+    ("Invoices", "silver", f"{SILVER}.PAD_100_billing_details_new",
+        "DATE(billing_date)",
+        "sales_organization", "division",
+        "SUM(sales_volume_quantity)",
+        "AND sales_volume_quantity <> 0"),
     ("Invoices", "gold", f"{FACT}.sales_newu_usud_sals_vn_d_view",
         "DATE(day)",
         "sales_organization_code", "division_key",
+        # view is expected to be pre-filtered to flag_cancellation = 0; SUM(invoices) here matches
+        # the funnel's Invoices today. If a serve_diff ever appears, an unfiltered flag_cancellation
+        # in the view is the first suspect.
         "SUM(invoices)",
         ""),
     ("Invoices", "gold_serve", FUNNEL_TABLE,

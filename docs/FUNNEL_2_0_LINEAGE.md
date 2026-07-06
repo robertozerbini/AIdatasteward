@@ -151,6 +151,23 @@ Filter `sales_orgnisation_code <> '5000'`.
 | `lead_type_mapping_new` | normalized `enquiry_source` | type / group |
 | `customer_leads_long` | `lead_id` (pop-up leads) | walk-in flag |
 
+### `sales_newu_usud_sals_vn_d_view` (invoice fact)
+Not a leaf — the invoice serving view is a `UNION` of two curated builds:
+`sales_newu_sals_vn_d` (new units, `distribution_channel = 10`) and `sales_usdu_sals_vn_d`
+(used units, `distribution_channel = 20`). Both are driven by **`PAD_100_billing_details_new`**.
+
+| Joined object | Join key | Purpose |
+|---------------|----------|---------|
+| `PAD_100_billing_document_header_data` | `billing_document` | header / customer group |
+| `cdm_automotive_vehicle_vin_master` | `batch_number` | VIN / model / segment |
+| `PAD_100_exchange_rates` | `from_currency` + latest date ≤ `billing_date` | AED conversion |
+| `PAD_100_characteristic_values` / condition tables | `billing_document` / `vin` | pricing conditions |
+| `PAD_100_units_material_stock_ageing` | `vin` | profit centre / ageing |
+
+Invoice measure `invoices = sales_volume_quantity` at `billing_date`; deduped via
+`flag_cancellation = 0` (drops rebills / `qty = -1` cancellation lines / non-latest documents),
+filtered on org / `sales_group` / `billing_type`.
+
 ## Funnel assembly (`prsls_ldmg_actv_dy`)
 
 Five streams each select the same 19 dimension columns + their own measures (zero-filling the

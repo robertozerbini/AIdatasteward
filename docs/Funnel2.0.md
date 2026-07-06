@@ -48,15 +48,17 @@ field in `prsls_ldmg_actv_dy`; the funnel notebook builds one stream per KPI fam
 | 3 | **Visits** (opportunities) | `sap_c4c_opportunity_header`, `sap_c4c_opportunity_item` | `customer_enquiries_long` | `CUSTOMER_ENQUIRIES` | `opportunities`, `open_opportunities_14d` |
 | 4 | **Test Drives** | `sap_c4c_follow_up_activities` | `customer_enquiries_long` | `CUSTOMER_TESTDRIVES` | `test_drives_booked`, `test_drives_completed`, `test_drives_oepn`, `test_drives_noshow`, `test_drives_cancelled` |
 | 5 | **Total Reservation** | — | — | `CUSTOMER_ORDERS` ← `sales_ordr_vn_d` | `total_order_items` (SUM item_quantity), `orders`, `orders_with_deposite`, `reservation_items_*` |
-| 6 | **Invoices** | — | — | `CUSTOMER_INVOICES` ← `sales_newu_usud_sals_vn_d_view` | `invoices` |
+| 6 | **Invoices** | `PAD_100_billing_details_new` (billing) | `sales_newu_sals_vn_d` (new) + `sales_usdu_sals_vn_d` (used) → `sales_newu_usud_sals_vn_d_view` | `CUSTOMER_INVOICES` ← `sales_newu_usud_sals_vn_d_view` | `invoices` |
 
 Every KPI also has a **`web_attributed_*`** counterpart (web/social origin, plus walk-ins
 recovered by the mobile-number back-join), and enquiries carry **lost-opportunity** reason
 breakdowns (`lost_oppo_*`).
 
-> **Attribution scope.** Total Reservation (`total_order_items`) and Invoices count **all**
-> reservation order types (`ZOR`/`YOR`/`TA` = Standard / Fleet / AFM Corporate) with **no
-> `sales_group` filter**, so they include retail, fleet and corporate. The enquiry join
+> **Attribution scope.** Total Reservation (`total_order_items`) counts **all** reservation
+> order types (`ZOR`/`YOR`/`TA` = Standard / Fleet / AFM Corporate) with **no `sales_group`
+> filter**; Invoices count **all** billing lines (`sales_volume_quantity`, deduped via
+> `flag_cancellation = 0`) with no `sales_group` filter — so both include retail, fleet and
+> corporate. The enquiry join
 > (`sales_ordr_vn_d.enquiry_id → customer_enquiries_long`) is `LEFT`, so orders with no C4C
 > enquiry — fleet / corporate / direct, whose `enquiry_id` is a constructed `org+div+office`
 > token like `209226Y211`, expected because **C4C is retail-focused** — still count in the KPI
@@ -79,7 +81,7 @@ breakdowns (`lost_oppo_*`).
 | **Visits** | `COUNT(1)` opportunities in `customer_enquiries_long`; `open_opportunities_14d` = still `Open` with test-drive gap > 15 days. |
 | **Test Drives** | Booked = any test-drive open/complete/cancel time; Completed = `testdrive_time` set; Open / No-show / Cancelled derived from open time vs `CURRENT_DATE` and cancel time. |
 | **Orders** | `COUNT(DISTINCT sales_document)` from `sales_ordr_vn_d` where `order_type IN ('ZOR','YOR','TA')`; item counts use `SUM(item_quantity)`. |
-| **Invoices** | `SUM(invoices)` from `sales_newu_usud_sals_vn_d_view`, split New / Used by `source_system`. |
+| **Invoices** | `SUM(invoices)` from `sales_newu_usud_sals_vn_d_view`, where `invoices = sales_volume_quantity` (billing-line volume) dated by `billing_date`. Deduped via `flag_cancellation = 0` (drops cancellation lines `qty = -1`, superseded rebills, and non-latest duplicate billing documents per batch). New / Used split by distribution channel (10 / 20). |
 
 ---
 
@@ -187,6 +189,36 @@ Filter `sales_orgnisation_code <> '5000'`.
 | `sap_c4c_quotation_header/_item`, `c4c_document_type_lkp`, `sap_c4c_missing_sales_order_ref`, `sap_c4c_sales_order_header` | `quotation_id` | quotations CTE |
 | `lead_type_mapping_new` | normalized `enquiry_source` | type / group |
 | `customer_leads_long` | `lead_id` (pop-up leads) | walk-in flag |
+
+### `sales_newu_usud_sals_vn_d_view` — Invoices
+Two sibling builds unioned into the serving view:
+
+- **`sales_newu_sals_vn_d`** — new units (`distribution_channel = 10` conditions)
+- **`sales_usdu_sals_vn_d`** — used units (`distribution_channel = 20` conditions)
+
+Both are driven by **`PAD_100_billing_details_new`** (`d`): the invoice measure is
+`invoices = d.sales_volume_quantity` dated by `d.billing_date AS day`, keyed on
+`billing_document` / `batch_number`.
+
+| Joined object | Join key | Purpose |
+|---------------|----------|---------|
+| `PAD_100_billing_document_header_data` | `billing_document` | customer group, header attributes |
+| `cdm_automotive_vehicle_vin_master` | `batch_number = LPAD(batch,10)` | VIN / model / segment |
+| `PAD_100_exchange_rates` | `from_currency` + latest effective date ≤ `billing_date` | AED conversion |
+| `PAD_100_characteristic_values` / condition tables | `billing_document` / `vin` | pricing conditions, discounts, cost |
+| `PAD_100_units_material_stock_ageing` | `vin` | profit centre, acquisition date, age |
+| `pad_100_hr_master_record_org_assignment` | `sales_employee = personnel_number` | SE name |
+
+**Dedup & filters (where Silver → Gold shrinks):**
+- `flag_cancellation` marks a row for exclusion when `billing_date < MAX(billing_date)` over the
+  batch (superseded rebill), `sales_volume_quantity = -1` (cancellation line), or the billing
+  document is not the latest in its batch. The serving view keeps `flag_cancellation = 0`.
+- Product filters: `sales_organization_code NOT IN ('2003','2382','2219','2184')`,
+  `sales_group NOT IN (5,22,63)`, `billing_type NOT IN ('ZPSI','Z142')`, `invoices <> 0`.
+
+> Both product tables **retain** `flag_cancellation` / `flag_scrap` as columns — the funnel's
+> Invoices figure applies the `flag_cancellation = 0` filter. If a Gold → Gold-Serve gap ever
+> appears for Invoices, an unfiltered `flag_cancellation` in the view is the first thing to check.
 
 ---
 
