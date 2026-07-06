@@ -555,6 +555,54 @@ except Exception as e:
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## 9c. Unattributed reservations — order-level totals & sample
+# MAGIC Reservations whose `enquiry_id` finds no match in `customer_enquiries_long` (the funnel's
+# MAGIC `LEFT JOIN` returns null). This matches a manual
+# MAGIC `... LEFT JOIN customer_enquiries_long CE ON SO.enquiry_id = CE.enquiry_id WHERE CE.enquiry_id IS NULL`.
+# MAGIC
+# MAGIC **Why the earlier drill's `191 keys / 229 rows` looked off:** that generic anti-join keyed
+# MAGIC on `enquiry_id` and (a) counted **distinct enquiry_id tokens** — but unattributed orders
+# MAGIC reuse a small set of constructed `org+div+office` tokens (`209226Y211`), so the distinct
+# MAGIC count saturates (~191) no matter how many orders there are; and (b) excluded orders with a
+# MAGIC **null/empty `enquiry_id`**. This section fixes both: it counts distinct **`sales_document`**
+# MAGIC (real orders) and **includes** null-enquiry_id orders, so it ties to your query.
+
+# COMMAND ----------
+
+_ro2, _rd2 = as_str("sales_organization"), as_str("division")
+_rof2 = f"AND {_ro2} = '{filter_org}'" if filter_org else ""
+_rdf2 = f"AND {_rd2} = '{filter_div}'" if filter_div else ""
+
+unattributed_base = f"""
+FROM {FACT}.sales_ordr_vn_d so
+LEFT JOIN (
+    SELECT DISTINCT enquiry_id
+    FROM {GOLD}.customer_enquiries_long
+    WHERE NULLIF(enquiry_id, '') IS NOT NULL
+) ce ON so.enquiry_id = ce.enquiry_id
+WHERE UPPER(so.order_type) IN ('ZOR','YOR','TA')
+  AND DATE(so.sales_item_creation_date) BETWEEN DATE('{start_date}') AND DATE('{end_date}')
+  AND ce.enquiry_id IS NULL
+  {_rof2} {_rdf2}
+"""
+
+unattributed_totals_sql = f"""
+SELECT COUNT(DISTINCT so.sales_document) AS unattributed_orders,
+       COUNT(*)                         AS order_line_rows,
+       SUM(so.item_quantity)            AS unattributed_item_qty,
+       COUNT(DISTINCT so.enquiry_id)    AS distinct_enquiry_tokens,
+       SUM(CASE WHEN NULLIF(so.enquiry_id, '') IS NULL THEN 1 ELSE 0 END) AS lines_with_null_enquiry_id
+{unattributed_base}
+"""
+try:
+    display(spark.sql(unattributed_totals_sql))
+    display(spark.sql(f"SELECT so.* {unattributed_base} LIMIT 50"))
+except Exception as e:
+    print("Unattributed reservations FAILED —", str(e).splitlines()[0])
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC # Granular drill-down — which rows are missing between layers
 # MAGIC For each KPI, sample the actual business keys (with **all attributes**) that exist in one
 # MAGIC layer but not the next — e.g. `lead_id`s in Silver `sap_c4c_leads` that never reach Gold
@@ -562,8 +610,8 @@ except Exception as e:
 # MAGIC
 # MAGIC **Scope of key-level anti-joins**
 # MAGIC - **Silver ↔ Gold** — full key-level comparison (both carry the business key).
-# MAGIC - **Total Reservation / Invoices** — fact rows that fail to attribute (fact key not found in the
-# MAGIC   product it joins to).
+# MAGIC - **Invoices** — invoice rows whose order key isn't found in `sales_ordr_vn_d`.
+# MAGIC   (Total Reservation attribution is order-keyed, not a token anti-join — see section 9c.)
 # MAGIC - **Gold ↔ Gold-Serve** — *not available at key level*: `prsls_ldmg_actv_dy` is a
 # MAGIC   pre-aggregated table with no `lead_id` / `enquiry_id`. Use the group-grain checks in
 # MAGIC   sections 5–7 for that boundary.
@@ -648,15 +696,10 @@ DRILL = [
      "COALESCE(TESTDRIVE_TIME, TESTDRIVE_CANCELLED_TIME, TESTDRIVE_OPEN_TIME)",
      ["source_only", "product_only"]),
 
-    # Total Reservation / Invoices: fact rows that fail to attribute to the product they join to.
-    ("Total Reservation",
-     ("gold_serve_fact", f"{FACT}.sales_ordr_vn_d", "enquiry_id",
-      _win("sales_item_creation_date") + " AND UPPER(order_type) IN ('ZOR','YOR','TA') AND NULLIF(enquiry_id,'') IS NOT NULL"),
-     ("enquiries", f"{GOLD}.customer_enquiries_long", "ENQUIRY_ID", "1=1"),
-     ("gold_serve_fact", "sales_organization", "division"),
-     ("enquiries", "SALES_ORGANISATION_CODE", "DIVISION_CODE"),
-     None,
-     ["source_only"]),
+    # NOTE: Total Reservation attribution is NOT a key-level anti-join — orders are keyed by
+    # sales_document, not enquiry_id (unattributed orders share a small set of constructed
+    # org+div+office enquiry_id tokens, and many have a null enquiry_id). See section 9c for the
+    # correct order-level view (distinct sales_document + item_quantity, includes null enquiry_id).
 
     ("Invoices",
      ("gold_serve_fact", f"{FACT}.sales_newu_usud_sals_vn_d_view", "sales_order_number",
