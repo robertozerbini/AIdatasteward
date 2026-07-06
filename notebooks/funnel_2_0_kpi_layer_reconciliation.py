@@ -78,6 +78,48 @@ print(f"Funnel table     : {FUNNEL_TABLE}")
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## 1b. Output formatting helper
+# MAGIC Every result below is preceded by a printed banner — **a title, how to read the table,
+# MAGIC and the action to take** — so each output cell explains itself without scrolling back to
+# MAGIC the markdown.
+
+# COMMAND ----------
+
+def banner(title, how_to_read=None, actions=None):
+    """Print a self-describing header above an output: title, how-to-read, actions.
+
+    how_to_read / actions are lists of short strings. Rendered as bullets so the
+    display() table (or print) that follows is readable on its own.
+    """
+    rule = "=" * 84
+    print(rule)
+    print(f"  {title}")
+    print(rule)
+    if how_to_read:
+        print("HOW TO READ")
+        for b in how_to_read:
+            print(f"  - {b}")
+    if actions:
+        print("WHAT TO DO")
+        for b in actions:
+            print(f"  > {b}")
+    print()
+
+
+# Shared legend for the reconciliation columns (reused across sections 5-7).
+COLUMN_LEGEND = [
+    "silver / gold / gold_serve = the KPI counted at each medallion layer.",
+    "gold_walkin = walk-in enquiries the funnel injects (Leads / Hot Leads only).",
+    "gold_incl_walkin = gold + gold_walkin (what the funnel should equal).",
+    "silver_to_gold_diff = gold - silver (informational; expected to shrink).",
+    "serve_diff = gold_serve - gold_incl_walkin (the integrity gap that matters).",
+    "final_status = OK when the funnel matches gold (incl. walk-ins), CHECK when it does not.",
+    "note = anything to verify without failing the row (chiefly silver<->gold differences).",
+]
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## 2. Assumptions to verify against your Silver schema
 # MAGIC Silver counts mirror the Gold business key / date logic as closely as possible. Silver
 # MAGIC **org / division are raw and approximate** — the Gold products derive them (from
@@ -377,12 +419,20 @@ if monthly_df is not None:
     cols = GROUP_KEYS + ["silver", "gold", "gold_walkin", "gold_incl_walkin", "gold_serve",
                          "silver_to_gold_diff", "serve_diff", "serve_match_pct",
                          "final_status", "note"]
-    display(spark.createDataFrame(summary[cols]))
-
     checks = summary[summary["final_status"] == "CHECK"]
     warns = summary[(summary["final_status"] != "CHECK") & (summary["note"] != "")]
-    print(f"final_status = CHECK (funnel != gold): {len(checks)} row(s)")
-    print(f"OK with a note to verify: {len(warns)} row(s)")
+
+    banner(
+        "5. RECONCILIATION SUMMARY  -  per KPI x sales_organization x division",
+        how_to_read=COLUMN_LEGEND + [
+            "One row per KPI / org / division. final_status is the headline verdict."],
+        actions=[
+            f"{len(checks)} row(s) are CHECK -> filter final_status = 'CHECK' and investigate "
+            "with the drill-down at the bottom.",
+            f"{len(warns)} row(s) are OK but carry a note -> read the note column to confirm the "
+            "silver<->gold difference is expected (dedup / timezone edge / refresh latency).",
+            "If final_status is OK and note is blank, the KPI reconciles - no action."])
+    display(spark.createDataFrame(summary[cols]))
 else:
     print("No results to summarise.")
 
@@ -408,6 +458,16 @@ if monthly_df is not None:
     rp["note"] = rp.apply(_row_note, axis=1)
     rp["kpi"] = pd.Categorical(rp["kpi"], categories=KPI_ORDER, ordered=True)
     rp = rp.sort_values("kpi")
+    banner(
+        "6. KPI ROLL-UP  -  all org / division combined",
+        how_to_read=[
+            "One row per KPI, org/division summed away. Same columns as section 5.",
+            "This is the top-line: does each KPI reconcile in aggregate?"],
+        actions=[
+            "Read final_status per KPI. OK = the KPI ties out overall.",
+            "A KPI that is OK here but has CHECK rows in section 5 means the gaps net to zero "
+            "across groups - still worth a look, but not a total loss.",
+            "A KPI that is CHECK here has a genuine aggregate gap -> start with this KPI."])
     display(spark.createDataFrame(rp[["kpi", "silver", "gold", "gold_walkin",
                                       "gold_incl_walkin", "gold_serve",
                                       "silver_to_gold_diff", "serve_diff",
@@ -437,6 +497,16 @@ if monthly_df is not None:
                           for e, gs in zip(wide["gold_incl_walkin"], wide["gold_serve"])]
     wide["kpi"] = pd.Categorical(wide["kpi"], categories=KPI_ORDER, ordered=True)
     wide = wide.sort_values(["kpi", "sales_organization", "division", "period"])
+    banner(
+        "7. MONTHLY BREAKDOWN  -  KPI x org x division x month",
+        how_to_read=[
+            "The section-5 summary exploded to one row per month.",
+            "serve_diff = gold_serve - gold_incl_walkin for that single month."],
+        actions=[
+            "Sort / scan serve_diff for the non-zero months - that pinpoints WHEN a CHECK row "
+            "in section 5 went wrong.",
+            "A one-off month spike usually means a late refresh or a timezone edge on that "
+            "month boundary; a persistent monthly gap is a real pipeline issue."])
     display(spark.createDataFrame(wide[["kpi", "sales_organization", "division", "period",
                                         "silver", "gold", "gold_walkin", "gold_incl_walkin",
                                         "gold_serve", "serve_diff"]]))
@@ -451,6 +521,15 @@ else:
 
 # COMMAND ----------
 
+banner(
+    "8. OBJECT / LAYER REFERENCE  -  what each number was counted from",
+    how_to_read=[
+        "One row per (KPI, layer): the exact table, org/division expression and measure used.",
+        "This is the provenance for every figure in sections 5-7."],
+    actions=[
+        "When a row looks wrong, check its measure/org/division expression here first - a "
+        "mismatch is often a column-mapping assumption, not a data loss.",
+        "Cross-check these against your Silver schema (see the section-2 assumptions table)."])
 ref_df = spark.createDataFrame([
     Row(kpi=kpi, layer=layer, object=obj,
         sales_organization=org_expr, division=div_expr, measure=value_expr)
@@ -503,6 +582,17 @@ FROM fact f
 FULL OUTER JOIN funnel u ON f.period = u.period
 ORDER BY period
 """
+banner(
+    "9. TOTAL RESERVATION  -  monthly validation (fact vs funnel)",
+    how_to_read=[
+        "fact_reservation = SUM(item_quantity) on sales_ordr_vn_d for order types ZOR/YOR/TA.",
+        "funnel_reservation = SUM(total_order_items) on the funnel for the same month.",
+        "diff = funnel - fact. distinct_orders is context only (order headers, not the KPI)."],
+    actions=[
+        "diff should be 0 each month -> tie fact_reservation to the SAP figure "
+        "(e.g. May 2026 = 3620 for the selected org).",
+        "A non-zero diff means the funnel's total_order_items disagrees with the fact -> "
+        "check the enquiry_id attribution in sections 9b / 9c."])
 try:
     display(spark.sql(reservation_sql))
 except Exception as e:
@@ -547,6 +637,18 @@ WHERE UPPER(so.order_type) IN ('ZOR','YOR','TA')
 GROUP BY 1, 2, 3
 ORDER BY period, channel_group, attribution
 """
+banner(
+    "9b. TOTAL RESERVATION  -  attribution x channel breakdown",
+    how_to_read=[
+        "Each month's item-quantity split two ways at once:",
+        "channel_group = retail/ecom (sales_group 001/040) vs fleet/corporate/other.",
+        "attribution = whether the order's enquiry_id is found in customer_enquiries_long.",
+        "reservation_items = SUM(item_quantity); orders = distinct sales_document."],
+    actions=[
+        "Expect fleet/corporate/other to be largely 'unattributed' - that is by design "
+        "(C4C is retail-focused), not a defect.",
+        "Watch the retail/ecom + unattributed cell: retail orders SHOULD attribute, so a large "
+        "figure there is real attribution loss -> drill into it in section 9c."])
 try:
     display(spark.sql(reservation_attr_sql))
 except Exception as e:
@@ -608,8 +710,27 @@ SELECT
 GROUP BY 1, 2
 ORDER BY 1, 2
 """
+banner(
+    "9c. UNATTRIBUTED RESERVATIONS  -  root-cause split",
+    how_to_read=[
+        "Only reservations whose enquiry_id has no match in customer_enquiries_long.",
+        "root_cause = 'Opportunity-id leakage' (enquiry_id present, missing from gold) vs "
+        "'Missing mapping in SAP' (enquiry_id null).",
+        "enquiry_id_shape splits leakage into numeric (a real opportunity id) vs non-numeric "
+        "token (a constructed org+office placeholder like 209226Y211).",
+        "unattributed_orders = distinct sales_document; unattributed_item_qty = SUM(item_quantity)."],
+    actions=[
+        "numeric leakage is the ACTIONABLE bucket -> chase the enquiries pipeline; those are real "
+        "opportunities that failed to reach gold. If non-trivial, escalate it.",
+        "null enquiry_id / non-numeric token = source-side SAP gap or expected fleet/direct -> "
+        "no pipeline fix, note it as known.",
+        "The 50-row sample below shows the raw orders for spot-checking individual documents."])
 try:
     display(spark.sql(unattributed_rootcause_sql))
+    print()
+    banner("9c (detail). Sample of unattributed reservation orders (raw rows, max 50)",
+           how_to_read=["Actual sales_ordr_vn_d rows behind the counts above, all attributes."],
+           actions=["Spot-check enquiry_id / sales_group / order_type to confirm the root cause."])
     display(spark.sql(f"SELECT so.* {unattributed_base} LIMIT 50"))
 except Exception as e:
     print("Unattributed reservations FAILED —", str(e).splitlines()[0])
@@ -735,12 +856,27 @@ def anti_sample(title, left, right, n):
     base = f"FROM {left_sub} LEFT ANTI JOIN {right_sub} ON L._key = R._key"
     try:
         c = spark.sql(f"SELECT COUNT(*) AS c, COUNT(DISTINCT L._key) AS k {base}").first()
-        print(f"[{title}]  in {l_lbl} not in {r_lbl}: {c['k']} distinct keys ({c['c']} rows)")
+        verdict = "OK - nothing missing" if c["c"] == 0 else f"CHECK - {c['k']} keys to explain"
+        print(f"[{title}]  in {l_lbl} not in {r_lbl}: "
+              f"{c['k']} distinct keys ({c['c']} rows)  ->  {verdict}")
         if c["c"]:
             display(spark.sql(f"SELECT L.* {base} LIMIT {n}"))
     except Exception as e:
         print(f"[{title}]  FAILED — {str(e).splitlines()[0]}")
 
+
+banner(
+    "DRILL-DOWN  -  which business keys are missing between layers",
+    how_to_read=[
+        "For each KPI, one line per direction, then a sample of the offending rows:",
+        "source_only = key is upstream (silver) but missing downstream (gold) = the real drop-off.",
+        "product_only = key is downstream but not upstream = key-derivation / join back-fill.",
+        "'0 distinct keys' means that boundary is clean; a non-zero count prints a sample below it."],
+    actions=[
+        "source_only > 0 for Leads/Visits/Test Drives: expected only for org 5000 (excluded from "
+        "gold) - if the sample shows other orgs, that is a genuine gold-load gap to fix.",
+        "product_only > 0: usually benign (rows sourced via a different key) - confirm in the sample.",
+        "Use the granular_sample_kpi / granular_sample_rows widgets to focus and enlarge samples."])
 
 for kpi, left, right, ldim, rdim, gdate, directions in DRILL:
     if SAMPLE_KPI != "All" and SAMPLE_KPI != kpi:
