@@ -120,6 +120,15 @@ REGISTRY = [
         "SALES_ORGANISATION_CODE", "DIVISION",
         "COUNT(DISTINCT LEAD_ID)",
         "AND SALES_ORGANISATION_CODE <> '5000'"),
+    # Walk-in leads injected by the CUSTOMER_ENQUIRIES stream (President Dashboard change):
+    #   funnel.leads = customer_leads_long leads + walk-in enquiries with no lead_id.
+    # Captured as its own `gold_walkin` layer so silver->gold stays a clean lead-path check;
+    # the summary compares (gold + gold_walkin) against gold_serve.
+    ("Leads", "gold_walkin", f"{GOLD}.customer_enquiries_long",
+        "DATE(ENQUIRY_CREATED_TIME)",
+        "SALES_ORGANISATION_CODE", "DIVISION_CODE",
+        "SUM(CASE WHEN LEAD_ID IS NULL AND UPPER(ENQUIRY_SOURCE) = 'WALK-IN' THEN 1 ELSE 0 END)",
+        ""),
     ("Leads", "gold_serve", FUNNEL_TABLE,
         "reporting_date",
         "sales_organization_code", "division_code",
@@ -138,6 +147,13 @@ REGISTRY = [
         "SALES_ORGANISATION_CODE", "DIVISION",
         "SUM(CASE WHEN LEAD_QUALIFICATION = 'Hot' OR PASS_TO_BRANCH_TIME IS NOT NULL THEN 1 ELSE 0 END)",
         "AND SALES_ORGANISATION_CODE <> '5000'"),
+    # Same walk-in expression feeds hot_leads too (identical CASE in the funnel), which is why
+    # the Leads and Hot Leads gold->serve gaps were identical.
+    ("Hot Leads", "gold_walkin", f"{GOLD}.customer_enquiries_long",
+        "DATE(ENQUIRY_CREATED_TIME)",
+        "SALES_ORGANISATION_CODE", "DIVISION_CODE",
+        "SUM(CASE WHEN LEAD_ID IS NULL AND UPPER(ENQUIRY_SOURCE) = 'WALK-IN' THEN 1 ELSE 0 END)",
+        ""),
     ("Hot Leads", "gold_serve", FUNNEL_TABLE,
         "reporting_date",
         "sales_organization_code", "division_code",
@@ -260,16 +276,39 @@ else:
 
 # MAGIC %md
 # MAGIC ## 5. Summary — totals & differences per KPI × sales_organization × division
-# MAGIC `silver → gold` = expected transformation shrinkage. `gold → gold_serve` = the integrity
-# MAGIC check; rows flagged `CHECK` are where Gold and Gold-Serve disagree for that org/brand.
+# MAGIC - `silver_to_gold_diff` = `gold − silver` — expected transformation shrinkage (dedup / filters).
+# MAGIC - `gold_walkin` = walk-in leads the funnel adds from `customer_enquiries_long`
+# MAGIC   (Leads / Hot Leads only; blank elsewhere).
+# MAGIC - `gold_incl_walkin` = `gold + gold_walkin` — the true Gold-side expectation for the funnel.
+# MAGIC - `serve_diff` = `gold_serve − gold_incl_walkin` — the integrity check. Rows flagged
+# MAGIC   `CHECK` are where the funnel still disagrees after accounting for walk-ins.
 
 # COMMAND ----------
 
 import pandas as pd
 
 KPI_ORDER = ["Leads", "Hot Leads", "Visits", "Test Drives", "Orders", "Invoices"]
-LAYERS = ["silver", "gold", "gold_serve"]
+LAYERS = ["silver", "gold", "gold_walkin", "gold_serve"]
 GROUP_KEYS = ["kpi", "sales_organization", "division"]
+
+
+def _num(x):
+    return 0.0 if pd.isna(x) else x
+
+
+def _diff(a, b):
+    return None if pd.isna(a) or pd.isna(b) else round(b - a, 2)
+
+
+def _pct(part, whole):
+    if pd.isna(part) or pd.isna(whole) or whole in (0, None):
+        return None
+    return round(100.0 * part / whole, 1)
+
+
+def _incl_walkin(g, w):
+    return pd.NA if (pd.isna(g) and pd.isna(w)) else round(_num(g) + _num(w), 2)
+
 
 def build_summary(pdf):
     piv = pdf.pivot_table(index=GROUP_KEYS, columns="layer",
@@ -278,18 +317,12 @@ def build_summary(pdf):
         if lyr not in piv.columns:
             piv[lyr] = pd.NA
 
-    def diff(a, b):
-        return None if pd.isna(a) or pd.isna(b) else round(b - a, 2)
-
-    def pct(part, whole):
-        if pd.isna(part) or pd.isna(whole) or whole in (0, None):
-            return None
-        return round(100.0 * part / whole, 1)
-
-    piv["silver_to_gold_diff"] = [diff(s, g) for s, g in zip(piv["silver"], piv["gold"])]
-    piv["gold_to_serve_diff"] = [diff(g, gs) for g, gs in zip(piv["gold"], piv["gold_serve"])]
-    piv["gold_serve_match_pct"] = [pct(gs, g) for g, gs in zip(piv["gold"], piv["gold_serve"])]
-    piv["status"] = piv["gold_to_serve_diff"].apply(
+    piv["gold_incl_walkin"] = [_incl_walkin(g, w)
+                               for g, w in zip(piv["gold"], piv["gold_walkin"])]
+    piv["silver_to_gold_diff"] = [_diff(s, g) for s, g in zip(piv["silver"], piv["gold"])]
+    piv["serve_diff"] = [_diff(e, gs) for e, gs in zip(piv["gold_incl_walkin"], piv["gold_serve"])]
+    piv["serve_match_pct"] = [_pct(gs, e) for e, gs in zip(piv["gold_incl_walkin"], piv["gold_serve"])]
+    piv["status"] = piv["serve_diff"].apply(
         lambda d: "n/a" if d is None else ("OK" if d == 0 else "CHECK"))
     piv["kpi"] = pd.Categorical(piv["kpi"], categories=KPI_ORDER, ordered=True)
     return piv.sort_values(["kpi", "sales_organization", "division"])
@@ -297,8 +330,8 @@ def build_summary(pdf):
 if monthly_df is not None:
     totals_pd = monthly_df.toPandas()
     summary = build_summary(totals_pd)
-    cols = GROUP_KEYS + LAYERS + [
-        "silver_to_gold_diff", "gold_to_serve_diff", "gold_serve_match_pct", "status"]
+    cols = GROUP_KEYS + ["silver", "gold", "gold_walkin", "gold_incl_walkin", "gold_serve",
+                         "silver_to_gold_diff", "serve_diff", "serve_match_pct", "status"]
     display(spark.createDataFrame(summary[cols]))
 else:
     print("No results to summarise.")
@@ -318,15 +351,14 @@ if monthly_df is not None:
     for lyr in LAYERS:
         if lyr not in rp.columns:
             rp[lyr] = pd.NA
-    rp["silver_to_gold_diff"] = [
-        None if pd.isna(s) or pd.isna(g) else round(g - s, 2)
-        for s, g in zip(rp["silver"], rp["gold"])]
-    rp["gold_to_serve_diff"] = [
-        None if pd.isna(g) or pd.isna(gs) else round(gs - g, 2)
-        for g, gs in zip(rp["gold"], rp["gold_serve"])]
+    rp["gold_incl_walkin"] = [_incl_walkin(g, w) for g, w in zip(rp["gold"], rp["gold_walkin"])]
+    rp["silver_to_gold_diff"] = [_diff(s, g) for s, g in zip(rp["silver"], rp["gold"])]
+    rp["serve_diff"] = [_diff(e, gs) for e, gs in zip(rp["gold_incl_walkin"], rp["gold_serve"])]
     rp["kpi"] = pd.Categorical(rp["kpi"], categories=KPI_ORDER, ordered=True)
     rp = rp.sort_values("kpi")
-    display(spark.createDataFrame(rp))
+    display(spark.createDataFrame(rp[["kpi", "silver", "gold", "gold_walkin",
+                                      "gold_incl_walkin", "gold_serve",
+                                      "silver_to_gold_diff", "serve_diff"]]))
 else:
     print("No results to roll up.")
 
@@ -346,13 +378,15 @@ if monthly_df is not None:
     for lyr in LAYERS:
         if lyr not in wide.columns:
             wide[lyr] = pd.NA
-    wide["gold_to_serve_diff"] = [
-        None if pd.isna(g) or pd.isna(gs) else round(gs - g, 2)
-        for g, gs in zip(wide["gold"], wide["gold_serve"])]
+    wide["gold_incl_walkin"] = [_incl_walkin(g, w)
+                                for g, w in zip(wide["gold"], wide["gold_walkin"])]
+    wide["serve_diff"] = [_diff(e, gs)
+                          for e, gs in zip(wide["gold_incl_walkin"], wide["gold_serve"])]
     wide["kpi"] = pd.Categorical(wide["kpi"], categories=KPI_ORDER, ordered=True)
     wide = wide.sort_values(["kpi", "sales_organization", "division", "period"])
     display(spark.createDataFrame(wide[["kpi", "sales_organization", "division", "period",
-                                        "silver", "gold", "gold_serve", "gold_to_serve_diff"]]))
+                                        "silver", "gold", "gold_walkin", "gold_incl_walkin",
+                                        "gold_serve", "serve_diff"]]))
 else:
     print("No results to break down.")
 
@@ -369,6 +403,68 @@ ref_df = spark.createDataFrame([
         sales_organization=org_expr, division=div_expr, measure=value_expr)
     for kpi, layer, obj, _d, org_expr, div_expr, value_expr, _w in REGISTRY])
 display(ref_df.orderBy("kpi", "layer"))
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 9. Orders double-count diagnostic
+# MAGIC The funnel's `orders` = `COUNT(DISTINCT sales_document)` summed across its dimension
+# MAGIC groups — which include `model_code` — so a multi-model order is counted once per model.
+# MAGIC This compares, per org × division × month:
+# MAGIC - `distinct_orders` — globally distinct `sales_document` (a true order count)
+# MAGIC - `order_x_model` — distinct `sales_document × model_code` (mirrors the funnel grain)
+# MAGIC - `funnel_orders` — `SUM(orders)` from the funnel table
+# MAGIC
+# MAGIC `multi_model_inflation = order_x_model − distinct_orders` explains the bulk of the gap;
+# MAGIC `residual = funnel_orders − order_x_model` is any extra fan-out from the enquiry join.
+
+# COMMAND ----------
+
+_fact_org, _fact_div = as_str("sales_organization"), as_str("division")
+_fun_org, _fun_div = as_str("sales_organization_code"), as_str("division_code")
+_fof = f"AND {_fact_org} = '{filter_org}'" if filter_org else ""
+_fdf = f"AND {_fact_div} = '{filter_div}'" if filter_div else ""
+_uof = f"AND {_fun_org} = '{filter_org}'" if filter_org else ""
+_udf = f"AND {_fun_div} = '{filter_div}'" if filter_div else ""
+
+orders_diag_sql = f"""
+WITH fact AS (
+  SELECT {_fact_org} AS sales_organization, {_fact_div} AS division,
+         DATE_TRUNC('MONTH', DATE(sales_item_creation_date)) AS period,
+         COUNT(DISTINCT sales_document)                                        AS distinct_orders,
+         COUNT(DISTINCT CONCAT(sales_document, '|', COALESCE(model_code, ''))) AS order_x_model
+  FROM {FACT}.sales_ordr_vn_d
+  WHERE UPPER(order_type) IN ('ZOR','YOR','TA')
+    AND DATE(sales_item_creation_date) BETWEEN DATE('{start_date}') AND DATE('{end_date}')
+    {_fof} {_fdf}
+  GROUP BY 1, 2, 3
+),
+funnel AS (
+  SELECT {_fun_org} AS sales_organization, {_fun_div} AS division,
+         DATE_TRUNC('MONTH', reporting_date) AS period,
+         SUM(orders) AS funnel_orders
+  FROM {FUNNEL_TABLE}
+  WHERE reporting_date BETWEEN DATE('{start_date}') AND DATE('{end_date}')
+    {_uof} {_udf}
+  GROUP BY 1, 2, 3
+)
+SELECT COALESCE(f.sales_organization, u.sales_organization) AS sales_organization,
+       COALESCE(f.division, u.division)                     AS division,
+       COALESCE(f.period, u.period)                         AS period,
+       f.distinct_orders, f.order_x_model, u.funnel_orders,
+       f.order_x_model - f.distinct_orders AS multi_model_inflation,
+       u.funnel_orders - f.order_x_model   AS residual
+FROM fact f
+FULL OUTER JOIN funnel u
+  ON f.sales_organization = u.sales_organization
+ AND f.division = u.division
+ AND f.period = u.period
+ORDER BY sales_organization, division, period
+"""
+try:
+    display(spark.sql(orders_diag_sql))
+except Exception as e:
+    print("Orders diagnostic FAILED —", str(e).splitlines()[0])
 
 # COMMAND ----------
 
