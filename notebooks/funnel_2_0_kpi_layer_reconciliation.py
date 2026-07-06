@@ -366,3 +366,143 @@ ref_df = spark.createDataFrame([
         sales_organization=org_expr, division=div_expr, measure=value_expr)
     for kpi, layer, obj, _d, org_expr, div_expr, value_expr, _w in REGISTRY])
 display(ref_df.orderBy("kpi", "layer"))
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # Granular drill-down — which rows are missing between layers
+# MAGIC For each KPI, sample the actual business keys (with **all attributes**) that exist in one
+# MAGIC layer but not the next — e.g. `lead_id`s in Silver `sap_c4c_leads` that never reach Gold
+# MAGIC `customer_leads_long`.
+# MAGIC
+# MAGIC **Scope of key-level anti-joins**
+# MAGIC - **Silver ↔ Gold** — full key-level comparison (both carry the business key).
+# MAGIC - **Orders / Invoices** — fact rows that fail to attribute (fact key not found in the
+# MAGIC   product it joins to).
+# MAGIC - **Gold ↔ Gold-Serve** — *not available at key level*: `prsls_ldmg_actv_dy` is a
+# MAGIC   pre-aggregated table with no `lead_id` / `enquiry_id`. Use the group-grain checks in
+# MAGIC   sections 5–7 for that boundary.
+# MAGIC
+# MAGIC **How to read it**
+# MAGIC - `source_only` = in the upstream layer, missing downstream (the drop-off you're chasing).
+# MAGIC - `product_only` = in the downstream layer, absent upstream (usually key-derivation or
+# MAGIC   join back-fill — e.g. leads sourced via a different key).
+# MAGIC - The upstream population is bounded by the date window / filters; the downstream
+# MAGIC   *existence* set is **not** date-bounded, so near-boundary date shifts don't create false
+# MAGIC   positives. Org `5000` is physically excluded from the Gold products, so those rows will
+# MAGIC   legitimately appear as `source_only` for Leads / Visits / Test Drives.
+
+# COMMAND ----------
+
+dbutils.widgets.text("granular_sample_rows", "20", "Drill-down: sample rows per anti-join")
+dbutils.widgets.dropdown(
+    "granular_sample_kpi", "All",
+    ["All", "Leads", "Hot Leads", "Visits", "Test Drives", "Orders", "Invoices"],
+    "Drill-down: KPI")
+
+SAMPLE_N = int(dbutils.widgets.get("granular_sample_rows") or "20")
+SAMPLE_KPI = dbutils.widgets.get("granular_sample_kpi")
+
+
+def _win(date_expr):
+    return f"DATE({date_expr}) BETWEEN DATE('{start_date}') AND DATE('{end_date}')"
+
+
+def _dim_filters(org_expr, div_expr):
+    f = ""
+    if filter_org:
+        f += f" AND {as_str(org_expr)} = '{filter_org}'"
+    if filter_div:
+        f += f" AND {as_str(div_expr)} = '{filter_div}'"
+    return f
+
+# Per KPI: the two key-bearing layers to compare and which directions to sample.
+# left/right = (label, object, key_expr, where_clause). Date/dim filters are applied to the
+# sampled side only; the existence side uses just its structural qualifier.
+DRILL = [
+    ("Leads",
+     ("silver", f"{SILVER}.sap_c4c_leads",
+      "LPAD(COALESCE(C4CLEADID, REPLACE(LEAD_ID,'C4C-','')), 10, '0')",
+      _win("COALESCE(CREATION_DATE, audit_dfd_created_date)")),
+     ("gold", f"{GOLD}.customer_leads_long", "LEAD_ID", "1=1"),
+     ("silver", "SALES_ORGANIZATION", "DIVISION"),
+     ("gold", "SALES_ORGANISATION_CODE", "DIVISION"),
+     ["source_only", "product_only"]),
+
+    ("Hot Leads",
+     ("silver", f"{SILVER}.sap_c4c_leads",
+      "LPAD(COALESCE(C4CLEADID, REPLACE(LEAD_ID,'C4C-','')), 10, '0')",
+      _win("COALESCE(CREATION_DATE, audit_dfd_created_date)") + " AND UPPER(QUALIFICATION) = 'HOT'"),
+     ("gold", f"{GOLD}.customer_leads_long", "LEAD_ID",
+      "(LEAD_QUALIFICATION = 'Hot' OR PASS_TO_BRANCH_TIME IS NOT NULL)"),
+     ("silver", "SALES_ORGANIZATION", "DIVISION"),
+     ("gold", "SALES_ORGANISATION_CODE", "DIVISION"),
+     ["source_only", "product_only"]),
+
+    ("Visits",
+     ("silver", f"{SILVER}.sap_c4c_opportunity_header", "LPAD(ID, 10, '0')",
+      _win("COALESCE(creationDate, audit_dfd_created_date)")),
+     ("gold", f"{GOLD}.customer_enquiries_long", "ENQUIRY_ID", "1=1"),
+     ("silver", "ORGID", "ENQUIRY_INFORMATION.DIVISION"),
+     ("gold", "SALES_ORGANISATION_CODE", "DIVISION_CODE"),
+     ["source_only", "product_only"]),
+
+    ("Test Drives",
+     ("silver", f"{SILVER}.sap_c4c_follow_up_activities", "LPAD(OPPORTUNITYID, 10, '0')",
+      _win("audit_dfd_created_date") + " AND SUBJECT_TYPE LIKE 'Test Drive%' AND NULLIF(OPPORTUNITYID,'') IS NOT NULL"),
+     ("gold", f"{GOLD}.customer_enquiries_long", "ENQUIRY_ID",
+      "COALESCE(TESTDRIVE_OPEN_TIME, TESTDRIVE_TIME, TESTDRIVE_CANCELLED_TIME) IS NOT NULL"),
+     ("silver", "SALES_ORGANIZATION", "DIVISION"),
+     ("gold", "SALES_ORGANISATION_CODE", "DIVISION_CODE"),
+     ["source_only", "product_only"]),
+
+    # Orders / Invoices: fact rows that fail to attribute to the product they join to.
+    ("Orders",
+     ("gold_serve_fact", f"{FACT}.sales_ordr_vn_d", "enquiry_id",
+      _win("sales_item_creation_date") + " AND UPPER(order_type) IN ('ZOR','YOR','TA') AND NULLIF(enquiry_id,'') IS NOT NULL"),
+     ("enquiries", f"{GOLD}.customer_enquiries_long", "ENQUIRY_ID", "1=1"),
+     ("gold_serve_fact", "sales_organization", "division"),
+     ("enquiries", "SALES_ORGANISATION_CODE", "DIVISION_CODE"),
+     ["source_only"]),
+
+    ("Invoices",
+     ("gold_serve_fact", f"{FACT}.sales_newu_usud_sals_vn_d_view", "sales_order_number",
+      _win("day") + " AND NULLIF(sales_order_number,'') IS NOT NULL"),
+     ("orders", f"{FACT}.sales_ordr_vn_d", "sales_document", "1=1"),
+     ("gold_serve_fact", "sales_organization_code", "division_key"),
+     ("orders", "sales_organization", "division"),
+     ["source_only"]),
+]
+
+
+def anti_sample(title, left, right, n):
+    """left/right = (label, object, key_expr, where). Sample left rows whose key is absent in right."""
+    l_lbl, l_obj, l_key, l_where = left
+    r_lbl, r_obj, r_key, r_where = right
+    left_sub = f"(SELECT *, {l_key} AS _key FROM {l_obj} WHERE {l_where}) L"
+    right_sub = f"(SELECT DISTINCT {r_key} AS _key FROM {r_obj} WHERE {r_where}) R"
+    base = f"FROM {left_sub} LEFT ANTI JOIN {right_sub} ON L._key = R._key"
+    try:
+        c = spark.sql(f"SELECT COUNT(*) AS c, COUNT(DISTINCT L._key) AS k {base}").first()
+        print(f"[{title}]  in {l_lbl} not in {r_lbl}: {c['k']} distinct keys ({c['c']} rows)")
+        if c["c"]:
+            display(spark.sql(f"SELECT L.* {base} LIMIT {n}"))
+    except Exception as e:
+        print(f"[{title}]  FAILED — {str(e).splitlines()[0]}")
+
+
+for kpi, left, right, ldim, rdim, directions in DRILL:
+    if SAMPLE_KPI != "All" and SAMPLE_KPI != kpi:
+        continue
+    # apply the sampled side's dimension filters
+    l_lbl, l_obj, l_key, l_where = left
+    r_lbl, r_obj, r_key, r_where = right
+    left_f = (l_lbl, l_obj, l_key, l_where + _dim_filters(ldim[1], ldim[2]))
+    right_f = (r_lbl, r_obj, r_key, r_where + _dim_filters(rdim[1], rdim[2]))
+    if "source_only" in directions:
+        anti_sample(f"{kpi} · source_only", left_f, right, SAMPLE_N)
+    if "product_only" in directions:
+        # sample the product side, existence check against source (source keeps its qualifier only)
+        prod_left = (r_lbl, r_obj, r_key, r_where + _dim_filters(rdim[1], rdim[2]))
+        src_right = (l_lbl, l_obj, l_key, left[3])
+        anti_sample(f"{kpi} · product_only", prod_left, src_right, SAMPLE_N)
