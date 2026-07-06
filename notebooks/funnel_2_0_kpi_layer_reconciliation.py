@@ -89,7 +89,7 @@ print(f"Funnel table     : {FUNNEL_TABLE}")
 # MAGIC | Object | sales_organization | division |
 # MAGIC |--------|--------------------|----------|
 # MAGIC | `sap_c4c_leads` | `SALES_ORGANIZATION` | `DIVISION` |
-# MAGIC | `sap_c4c_opportunity_header` | `ORGID` | `ENQUIRY_INFORMATION.DIVISION` |
+# MAGIC | `sap_c4c_opportunity_header` | `ORGID` | `get_json_object(ENQUIRY_INFORMATION,'$.division')` (raw JSON string) |
 # MAGIC | `sap_c4c_follow_up_activities` | `SALES_ORGANIZATION` | `DIVISION` |
 # MAGIC | `customer_leads_long` | `SALES_ORGANISATION_CODE` | `DIVISION` |
 # MAGIC | `customer_enquiries_long` | `SALES_ORGANISATION_CODE` | `DIVISION_CODE` |
@@ -147,7 +147,10 @@ REGISTRY = [
     # ---------------- Visits (opportunities) ----------------
     ("Visits", "silver", f"{SILVER}.sap_c4c_opportunity_header",
         "DATE(COALESCE(creationDate, audit_dfd_created_date))",
-        "ORGID", "ENQUIRY_INFORMATION.DIVISION",
+        "ORGID",
+        # ENQUIRY_INFORMATION is a raw JSON string on Silver (struct only after from_json cast)
+        "COALESCE(get_json_object(ENQUIRY_INFORMATION,'$.division'), "
+        "get_json_object(ENQUIRY_INFORMATION,'$.DIVISION'))",
         "COUNT(DISTINCT ID)",
         ""),
     ("Visits", "gold", f"{GOLD}.customer_enquiries_long",
@@ -443,7 +446,9 @@ DRILL = [
      ("silver", f"{SILVER}.sap_c4c_opportunity_header", "LPAD(ID, 10, '0')",
       _win("COALESCE(creationDate, audit_dfd_created_date)")),
      ("gold", f"{GOLD}.customer_enquiries_long", "ENQUIRY_ID", "1=1"),
-     ("silver", "ORGID", "ENQUIRY_INFORMATION.DIVISION"),
+     ("silver", "ORGID",
+      "COALESCE(get_json_object(ENQUIRY_INFORMATION,'$.division'), "
+      "get_json_object(ENQUIRY_INFORMATION,'$.DIVISION'))"),
      ("gold", "SALES_ORGANISATION_CODE", "DIVISION_CODE"),
      ["source_only", "product_only"]),
 
