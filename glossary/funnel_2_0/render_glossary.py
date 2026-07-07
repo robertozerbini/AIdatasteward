@@ -47,6 +47,11 @@ def _code_join(values) -> str:
     return ", ".join(f"`{v}`" for v in items) if items else "—"
 
 
+def _cell(text: str) -> str:
+    """Make a string safe for a markdown table cell (escape pipes, one line)."""
+    return _clean(text).replace("|", "\\|") or "—"
+
+
 def render_kpis(data: dict) -> str:
     meta = data["meta"]
     kpis = sorted(data["kpis"], key=lambda k: k.get("stage", 0))
@@ -59,38 +64,34 @@ def render_kpis(data: dict) -> str:
         f"**Version:** {meta['version']} · **Last reviewed:** {meta['last_reviewed']}\n"
     )
 
-    # Summary table.
-    out.append("## Funnel at a glance\n")
-    out.append("| # | KPI | Source | Serving stream | Measure column(s) |")
-    out.append("|---|-----|--------|----------------|-------------------|")
+    # Data dictionary — KPI | Definition | Source | Pseudo code | Note.
+    out.append("## Data dictionary\n")
+    out.append("| KPI | Definition | Source | Pseudo code | Note |")
+    out.append("|-----|------------|--------|-------------|------|")
     for k in kpis:
-        measures = ", ".join(f"`{m}`" for m in _as_list(k["technical"].get("measure_columns")))
         out.append(
-            f"| {k.get('stage', '')} | **{k['name']}** | {k['source_system']} "
-            f"| `{k['technical'].get('serve_stream', '')}` | {measures} |"
+            f"| **{_cell(k['name'])}** "
+            f"| {_cell(k['definition'])} "
+            f"| {_cell(k['source_system'])} "
+            f"| {_cell(k['pseudo_code'])} "
+            f"| {_cell(k.get('notes', ''))} |"
         )
     out.append("")
 
-    # Detail cards.
-    out.append("## Definitions\n")
+    # Lineage reference (kept separately so the dictionary stays readable).
+    out.append("## Lineage reference\n")
+    out.append("| KPI | Silver source | Gold product | Serving stream | Measure column(s) |")
+    out.append("|-----|---------------|--------------|----------------|-------------------|")
     for k in kpis:
         tech = k["technical"]
-        out.append(f"### {k.get('stage', '')}. {k['name']}\n")
-        domain = k.get("domain") or "—"
         out.append(
-            f"- **Source system:** {k['source_system']}  \n"
-            f"- **KPI domain:** {domain}  \n"
-            f"- **Status:** {k.get('status', 'approved')}\n"
+            f"| **{_cell(k['name'])}** "
+            f"| {_code_join(tech.get('silver_source'))} "
+            f"| {_code_join(tech.get('gold_product'))} "
+            f"| {_code_join(tech.get('serve_stream'))} "
+            f"| {_code_join(tech.get('measure_columns'))} |"
         )
-        out.append(f"**Definition.** {_clean(k['definition'])}\n")
-        out.append(f"**Calculation (pseudo-code).** {_clean(k['pseudo_code'])}\n")
-        out.append("**Lineage.**\n")
-        out.append(f"- Silver source: {_code_join(tech.get('silver_source'))}")
-        out.append(f"- Gold product: {_code_join(tech.get('gold_product'))}")
-        out.append(f"- Serving stream: {_code_join(tech.get('serve_stream'))}")
-        out.append(f"- Measure column(s): {_code_join(tech.get('measure_columns'))}\n")
-        if k.get("notes"):
-            out.append(f"> **Notes.** {_clean(k['notes'])}\n")
+    out.append("")
 
     out.append("---\n")
     out.append(
