@@ -11,11 +11,13 @@
 # MAGIC | Leads / Hot Leads | `sap_c4c_leads` | `customer_leads_long` | `prsls_ldmg_actv_dy.leads / hot_leads` |
 # MAGIC | Visits | `sap_c4c_opportunity_header` | `customer_enquiries_long` | `…opportunities` |
 # MAGIC | Test Drives | `sap_c4c_follow_up_activities` | `customer_enquiries_long` | `…test_drives_booked` |
-# MAGIC | Total Reservation | — | `sales_ordr_vn_d` * | `…total_order_items` |
+# MAGIC | Total Reservation | `PAD_100_sales_document_header` ⋈ `_item_data` | `sales_ordr_vn_d` * | `…total_order_items` |
 # MAGIC | Invoices | `PAD_100_billing_details_new` | `sales_newu_usud_sals_vn_d_view` ** | `…invoices` |
 # MAGIC
-# MAGIC \* Total Reservation has no separate curated Gold product — the serving fact `sales_ordr_vn_d`
-# MAGIC is its upstream, so it populates the "Gold" column here.
+# MAGIC \* Total Reservation's Gold data product `sales_ordr_vn_d` is built from the SAP sales-document
+# MAGIC header ⋈ item (dist. channel 10/20); it fills the "Gold" column here. Its Silver is that same
+# MAGIC raw header⋈item join, pre-enrichment, so Silver → Gold differs by the vehicle-link fan-out /
+# MAGIC `DISTINCT` and the vehicle/status/rejection filters the product applies.
 # MAGIC
 # MAGIC \*\* Invoices *do* have a curated Gold data product: `sales_newu_sals_vn_d` (new units) +
 # MAGIC `sales_usdu_sals_vn_d` (used units), UNION-ed into `sales_newu_usud_sals_vn_d_view`. Both are
@@ -170,6 +172,7 @@ COLUMN_LEGEND = [
 # MAGIC | `sap_c4c_follow_up_activities` | `SALES_ORGANIZATION` | `DIVISION` |
 # MAGIC | `customer_leads_long` | `SALES_ORGANISATION_CODE` | `DIVISION` |
 # MAGIC | `customer_enquiries_long` | `SALES_ORGANISATION_CODE` | `DIVISION_CODE` |
+# MAGIC | `PAD_100_sales_document_header` ⋈ `_item_data` (Total Reservation Silver) | `sales_organization` | `division` |
 # MAGIC | `sales_ordr_vn_d` | `sales_organization` | `division` |
 # MAGIC | `PAD_100_billing_details_new` (Invoices Silver) | `sales_organization` | `division` |
 # MAGIC | `sales_newu_usud_sals_vn_d_view` | `sales_organization_code` | `division_key` |
@@ -286,6 +289,31 @@ REGISTRY = [
     # SAP def: SUM(item_quantity) where sales_item_creation_date is in the period and
     # order_type IN ('ZOR','YOR','TA') = Standard Order / Fleet Order / AFM Corporate Order.
     # In the funnel this is the additive `total_order_items` column.
+    #
+    # Gold data product sales_ordr_vn_d is built from PAD_100_sales_document_header (h) LEFT JOIN
+    # PAD_100_sales_document_item_data (i) on sales_document, filtered to distribution_channel
+    # IN ('10','20'); item_quantity = CASE WHEN sales_document_item IS NOT NULL THEN 1 (a line
+    # flag, so SUM(item_quantity) = count of order line items), order_type = h.sales_document_type,
+    # sales_item_creation_date = i.record_creation_date.
+    #
+    # Silver = that same raw header<->item join, pre-enrichment. It differs from gold by the
+    # vehicle-link fan-out + SELECT DISTINCT and the vehicle/status/rejection filters gold applies,
+    # so a silver<->gold gap here is expected (informational), like the other KPIs.
+    # NOTE: record_creation_date is an SAP business date (local) — no +4h shift (unlike sap_c4c_*).
+    ("Total Reservation", "silver",
+        f"""(SELECT h.sales_organization, h.division,
+                    h.sales_document_type AS order_type,
+                    i.record_creation_date AS item_creation_date,
+                    CASE WHEN NULLIF(TRIM(i.sales_document_item), '') IS NOT NULL THEN 1 ELSE 0 END
+                        AS item_quantity
+             FROM {SILVER}.PAD_100_sales_document_header h
+             LEFT JOIN {SILVER}.PAD_100_sales_document_item_data i
+                    ON h.sales_document = i.sales_document
+             WHERE h.distribution_channel IN ('10','20')) sod""",
+        "DATE(item_creation_date)",
+        "sales_organization", "division",
+        "SUM(item_quantity)",
+        "AND UPPER(order_type) IN ('ZOR','YOR','TA')"),
     ("Total Reservation", "gold", f"{FACT}.sales_ordr_vn_d",
         "DATE(sales_item_creation_date)",
         "sales_organization", "division",
@@ -705,15 +733,21 @@ except Exception as e:
 
 # MAGIC %md
 # MAGIC ## 9c. Unattributed reservations — root-cause split
+# MAGIC **Where `so.enquiry_id` comes from:** in the `sales_ordr_vn_d` build it is
+# MAGIC `LPAD(opportunity_number, 10)` sourced from `PAD_100_purchase_agreement_form_from_c4c`
+# MAGIC (joined on `sales_document`). So an order only carries an `enquiry_id` when SAP recorded a
+# MAGIC **C4C purchase-agreement form** linking it to an opportunity; otherwise it is null.
+# MAGIC
 # MAGIC Reservations whose `enquiry_id` finds no match in `customer_enquiries_long` (the funnel's
 # MAGIC `LEFT JOIN` returns null), classified by **root cause**:
-# MAGIC - **`enquiry_id` present but not in gold → opportunity-id leakage.** The order references an
-# MAGIC   opportunity/enquiry that never landed in `customer_enquiries_long` (a gap in the enquiries
-# MAGIC   pipeline). `enquiry_id_shape` further flags whether it is `numeric` (a real opportunity id
-# MAGIC   that leaked) or a `non-numeric token` (a constructed `org+office` placeholder like
-# MAGIC   `209226Y211`).
-# MAGIC - **`enquiry_id` null → missing mapping in SAP.** The order was never linked to an
-# MAGIC   opportunity at source (typical for fleet / corporate / direct, since C4C is retail).
+# MAGIC - **`enquiry_id` present but not in gold → opportunity-id leakage.** The purchase-agreement
+# MAGIC   form's `opportunity_number` never landed in `customer_enquiries_long` (a gap in the
+# MAGIC   enquiries pipeline). `enquiry_id_shape` further flags whether it is `numeric` (a real
+# MAGIC   opportunity id that leaked) or a `non-numeric token` (a constructed `org+office`
+# MAGIC   placeholder like `209226Y211`).
+# MAGIC - **`enquiry_id` null → missing mapping in SAP.** No purchase-agreement-form row exists for
+# MAGIC   the order, so it was never linked to an opportunity at source (typical for fleet /
+# MAGIC   corporate / direct, since C4C is retail).
 # MAGIC
 # MAGIC Counts distinct **`sales_document`** (real orders) and `item_quantity`, and **includes**
 # MAGIC null-enquiry_id orders — so it ties to a manual
