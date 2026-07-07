@@ -52,6 +52,23 @@ def _cell(text: str) -> str:
     return _clean(text).replace("|", "\\|") or "—"
 
 
+_STATUS_LABELS = {
+    "approved": "Approved",
+    "under_approval": "Under approval",
+    "draft": "Draft",
+    "deprecated": "Deprecated",
+}
+
+
+def _status_label(kpi: dict) -> str:
+    """Human-readable approval + implementation state for a KPI."""
+    status = kpi.get("status", "under_approval")
+    label = _STATUS_LABELS.get(status, status.replace("_", " ").capitalize())
+    if kpi.get("implemented", True) is False:
+        label += " · not yet implemented"
+    return label
+
+
 def render_kpis(data: dict) -> str:
     meta = data["meta"]
     kpis = sorted(data["kpis"], key=lambda k: k.get("stage", 0))
@@ -59,18 +76,24 @@ def render_kpis(data: dict) -> str:
     out: list[str] = [GENERATED_BANNER]
     out.append(f"# {meta['funnel']} — KPI Business Glossary\n")
     out.append(f"_{meta['subtitle']}. Report table: `{meta['report_table']}`._\n")
+    meta_status = _STATUS_LABELS.get(meta["status"], meta["status"])
     out.append(
-        f"**Owner:** {meta['owner']} · **Status:** {meta['status']} · "
+        f"**Owner:** {meta['owner']} · **Status:** {meta_status} · "
         f"**Version:** {meta['version']} · **Last reviewed:** {meta['last_reviewed']}\n"
     )
+    out.append(
+        "> All definitions are **under approval** — pending steward validation, "
+        "not yet signed off.\n"
+    )
 
-    # Data dictionary — KPI | Definition | Source | Pseudo code | Note.
+    # Data dictionary — KPI | Status | Definition | Source | Pseudo code | Note.
     out.append("## Data dictionary\n")
-    out.append("| KPI | Definition | Source | Pseudo code | Note |")
-    out.append("|-----|------------|--------|-------------|------|")
+    out.append("| KPI | Status | Definition | Source | Pseudo code | Note |")
+    out.append("|-----|--------|------------|--------|-------------|------|")
     for k in kpis:
         out.append(
             f"| **{_cell(k['name'])}** "
+            f"| {_cell(_status_label(k))} "
             f"| {_cell(k['definition'])} "
             f"| {_cell(k['source_system'])} "
             f"| {_cell(k['pseudo_code'])} "

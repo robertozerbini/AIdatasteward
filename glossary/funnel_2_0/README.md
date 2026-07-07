@@ -7,20 +7,26 @@ It answers *"what does this KPI mean, how is it calculated, and where does it
 come from?"* in one place, so business users, analysts and data stewards share
 a single agreed definition.
 
+> **Status: under approval.** All definitions here are pending steward
+> validation — they are not yet signed off. Each row in [`kpis.md`](kpis.md)
+> carries its own status, and metrics not yet built into the pipeline (e.g.
+> the Reservation Bank) are flagged *not yet implemented*.
+
 ## Contents
 
 | File | What it is |
 |------|-----------|
 | **[`glossary.yaml`](glossary.yaml)** | **Single source of truth.** Machine-readable KPI + term definitions. Edit this. |
-| [`kpis.md`](kpis.md) | Generated. The six funnel KPIs — definition, pseudo-code, lineage. |
+| [`kpis.md`](kpis.md) | Generated. The funnel KPIs — status, definition, source, pseudo-code, note (+ lineage reference). |
 | [`terms.md`](terms.md) | Generated. Supporting business vocabulary (LEAD_ID, walk-in, order type…). |
 | [`render_glossary.py`](render_glossary.py) | Regenerates `kpis.md` and `terms.md` from `glossary.yaml`. |
 
 ## The KPIs
 
 The funnel in journey order — **Leads → Hot Leads → Visits → Test Drives →
-Total Reservations → Invoices**. See [`kpis.md`](kpis.md) for the full,
-steward-approved definitions.
+Total Reservations → Invoices** — plus **Total Open Reservations (Reservation
+Bank)**, a stock/open-orders metric not yet implemented. See [`kpis.md`](kpis.md)
+for the full definitions (all under approval).
 
 ## How this glossary is maintained
 

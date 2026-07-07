@@ -36,8 +36,9 @@ place to alert and dashboard.
 ## Business glossary
 
 - **[glossary/funnel_2_0/](glossary/funnel_2_0/)** — the steward-owned business
-  glossary for **Funnel 2.0**: the six funnel KPIs (Leads → Invoices), their
-  definitions, pseudo-code, and supporting terms. `glossary.yaml` is the source
+  glossary for **Funnel 2.0**: the funnel KPIs (Leads → Invoices) plus the
+  open-reservation bank metric, with definitions, pseudo-code, and supporting
+  terms. All definitions are **under approval**. `glossary.yaml` is the source
   of truth; the markdown is generated and drift-guarded in CI.
 
 ## Layout

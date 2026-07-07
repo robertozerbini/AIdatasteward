@@ -17,8 +17,8 @@ meta:
   subtitle: "Lead-to-invoice automotive sales funnel"
   report_table: "prsls_ldmg_actv_dy"
   owner: "Sales Analytics / Data Stewardship"
-  status: approved
-  version: "1.0.0"
+  status: under_approval  # all definitions pending steward validation
+  version: "1.1.0"
   last_reviewed: "2026-07-07"
   source_of_record: "Key KPI Definitions — Sales Funnel 2.0 (steward workbook)"
   related_docs:
@@ -33,7 +33,8 @@ kpis:
     stage: 1
     source_system: "SAP (C4C)"
     domain: ""
-    status: approved
+    status: under_approval
+    implemented: true
     definition: >-
       Total number of leads captured across all channels during the selected
       analysis period. This KPI is calculated as the count of distinct
@@ -56,7 +57,8 @@ kpis:
     stage: 2
     source_system: "SAP (C4C)"
     domain: ""
-    status: approved
+    status: under_approval
+    implemented: true
     definition: >-
       Total number of qualified leads with strong purchase intent during the
       selected analysis period. A lead is considered qualified when its
@@ -80,7 +82,8 @@ kpis:
     stage: 3
     source_system: "SAP (C4C)"
     domain: ""
-    status: approved
+    status: under_approval
+    implemented: true
     definition: >-
       Total number of showroom visits recorded during the selected analysis
       period for the chosen brand.
@@ -99,7 +102,8 @@ kpis:
     stage: 4
     source_system: "SAP (C4C)"
     domain: ""
-    status: approved
+    status: under_approval
+    implemented: true
     definition: >-
       Total number of test drives completed during the selected analysis period
       for the chosen brand.
@@ -127,7 +131,8 @@ kpis:
     stage: 5
     source_system: "SAP"
     domain: ""
-    status: approved
+    status: under_approval
+    implemented: true
     definition: >-
       Total number of reservation items (sum of item quantity) created during
       the selected analysis period for the chosen brand.
@@ -151,7 +156,8 @@ kpis:
     stage: 6
     source_system: "SAP"
     domain: ""
-    status: approved
+    status: under_approval
+    implemented: true
     definition: >-
       Total number of vehicle invoices generated during the selected analysis
       period for the selected brand. A sold vehicle invoice adds 1 to the total,
@@ -169,6 +175,30 @@ kpis:
     notes: >-
       Net of reversals. Deduped via `flag_cancellation = 0`. New / Used split by
       distribution channel (10 / 20). No `sales_group` filter.
+
+  - name: Total Open Reservations (Reservation Bank)
+    stage: 7
+    source_system: "SAP"
+    domain: ""
+    status: under_approval
+    implemented: false
+    aliases: [Order Bank, Open Orders, Reservation Bank]
+    definition: >-
+      Sum of reservation item quantities for open reservations as of the
+      selected snapshot date.
+    pseudo_code: >-
+      Sum ITEM QUANTITY for reservation items where SALES ORDER NUMBER does not
+      start with '0020' or '0060', REASON FOR REJECTION is blank, SECONDARY
+      STATUS is either 'Sales Order Created' or blank. Additionally, if any
+      duplicate VIN rows exist, they are removed.
+    technical:
+      silver_source: []
+      measure_columns: []
+    notes: >-
+      New KPI — not yet implemented in the Funnel 2.0 pipeline; lineage and
+      measure columns to be defined at implementation. Also known as the order
+      bank / open orders. A stock (snapshot) measure of the open reservation
+      bank, distinct from the Total Reservations flow KPI.
 
 # -----------------------------------------------------------------------------
 # Supporting business terms — the vocabulary the KPI definitions rely on.
@@ -240,6 +270,28 @@ terms:
       ORDER TYPE IN Standard Order (ZOR), Fleet Order (YOR) and AFM Corporate
       Order (TA).
     related: [Total Reservations, Reservation item]
+
+  - term: Order Bank (Reservation Bank)
+    definition: >-
+      The stock of open reservations outstanding as of a snapshot date — orders
+      taken but not yet invoiced or cancelled. Measured by Total Open
+      Reservations. A point-in-time balance, unlike the flow KPIs that count
+      events within a period.
+    related: [Total Open Reservations (Reservation Bank), Total Reservations, Open reservation]
+
+  - term: Open reservation
+    definition: >-
+      A reservation still live at the snapshot date — its sales order number
+      does not start with '0020' or '0060', it has no reason for rejection, and
+      its secondary status is 'Sales Order Created' or blank.
+    related: [Total Open Reservations (Reservation Bank), Order Bank (Reservation Bank)]
+
+  - term: Snapshot date
+    definition: >-
+      The as-of date a stock (bank) metric is evaluated on. Total Open
+      Reservations is a balance as of the selected snapshot date, rather than a
+      sum over an analysis period.
+    related: [Total Open Reservations (Reservation Bank), Analysis period]
 
   - term: Invoice reversal
     definition: >-
