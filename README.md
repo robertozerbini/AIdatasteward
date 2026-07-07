@@ -33,6 +33,13 @@ place to alert and dashboard.
 - **[docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md)** — routing failures to email,
   Teams, and Jira, and configuring who gets notified.
 
+## Business glossary
+
+- **[glossary/funnel_2_0/](glossary/funnel_2_0/)** — the steward-owned business
+  glossary for **Funnel 2.0**: the six funnel KPIs (Leads → Invoices), their
+  definitions, pseudo-code, and supporting terms. `glossary.yaml` is the source
+  of truth; the markdown is generated and drift-guarded in CI.
+
 ## Layout
 
 ```
