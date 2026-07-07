@@ -1,0 +1,256 @@
+# =============================================================================
+# Funnel 2.0 — Business Glossary (canonical source of truth)
+# =============================================================================
+# This YAML is the single source of truth for the Funnel 2.0 business glossary.
+# Edit THIS file, then regenerate the markdown with:
+#
+#     python glossary/funnel_2_0/render_glossary.py
+#
+# Business definitions & pseudo-code originate from the steward-approved
+# "Key KPI Definitions — Sales Funnel 2.0" workbook. Technical mappings
+# (source systems, gold products, serving streams, measure columns) are kept
+# in sync with docs/Funnel2.0.md and docs/FUNNEL_2_0_LINEAGE.md.
+# -----------------------------------------------------------------------------
+
+meta:
+  funnel: "Funnel 2.0"
+  subtitle: "Lead-to-invoice automotive sales funnel"
+  report_table: "prsls_ldmg_actv_dy"
+  owner: "Sales Analytics / Data Stewardship"
+  status: approved
+  version: "1.0.0"
+  last_reviewed: "2026-07-07"
+  source_of_record: "Key KPI Definitions — Sales Funnel 2.0 (steward workbook)"
+  related_docs:
+    - docs/Funnel2.0.md
+    - docs/FUNNEL_2_0_LINEAGE.md
+
+# -----------------------------------------------------------------------------
+# KPIs — the six headline funnel stages, in journey order.
+# -----------------------------------------------------------------------------
+kpis:
+  - name: Leads
+    stage: 1
+    source_system: "SAP (C4C)"
+    domain: ""
+    status: approved
+    definition: >-
+      Total number of leads captured across all channels during the selected
+      analysis period. This KPI is calculated as the count of distinct
+      LEAD_IDs, with walk-in visits that do not have a LEAD_ID counted
+      separately and added to the total.
+    pseudo_code: >-
+      Count distinct LEAD_IDs created within the selected analysis period, then
+      add the count of distinct walk-in enquiries where LEAD_ID is blank or
+      null.
+    technical:
+      silver_source: sap_c4c_leads
+      gold_product: customer_leads_long
+      serve_stream: CUSTOMER_LEADS
+      measure_columns: [leads, leads_without_walkins]
+    notes: >-
+      Org 5000 is excluded throughout. `leads_without_walkins` excludes
+      pop-up / walk-in leads.
+
+  - name: Hot Leads
+    stage: 2
+    source_system: "SAP (C4C)"
+    domain: ""
+    status: approved
+    definition: >-
+      Total number of qualified leads with strong purchase intent during the
+      selected analysis period. A lead is considered qualified when its
+      qualification is marked as Hot or when it has been passed to branch.
+      Walk-in visits without a LEAD_ID are counted separately and added to the
+      total.
+    pseudo_code: >-
+      Count distinct LEAD_IDs where QUALIFICATION = 'Hot' or PASS_TO_BRANCH_TIME
+      is not blank, then add the count of distinct walk-in enquiries where
+      LEAD_ID is blank or null.
+    technical:
+      silver_source: sap_c4c_leads
+      gold_product: customer_leads_long
+      serve_stream: CUSTOMER_LEADS
+      measure_columns: [hot_leads, hot_leads_without_walkins]
+    notes: >-
+      A subset of Leads. Qualification is `lead_qualification = 'Hot'` OR
+      `pass_to_branch_time IS NOT NULL`.
+
+  - name: Visits
+    stage: 3
+    source_system: "SAP (C4C)"
+    domain: ""
+    status: approved
+    definition: >-
+      Total number of showroom visits recorded during the selected analysis
+      period for the chosen brand.
+    pseudo_code: >-
+      Count distinct OPPORTUNITY IDs within the selected analysis period.
+    technical:
+      silver_source: [sap_c4c_opportunity_header, sap_c4c_opportunity_item]
+      gold_product: customer_enquiries_long
+      serve_stream: CUSTOMER_ENQUIRIES
+      measure_columns: [opportunities, open_opportunities_14d]
+    notes: >-
+      A showroom visit is modelled as a C4C opportunity. `open_opportunities_14d`
+      = opportunity still Open with a test-drive gap > 15 days.
+
+  - name: Test Drives
+    stage: 4
+    source_system: "SAP (C4C)"
+    domain: ""
+    status: approved
+    definition: >-
+      Total number of test drives completed during the selected analysis period
+      for the chosen brand.
+    pseudo_code: >-
+      Count of unique showroom visits where the related enquiry/opportunity has
+      a test-drive activity marked as completed. Completion is identified when a
+      C4C follow-up activity has TYPE = 'Test Drive' and STATUS = 'Completed'.
+      The completed timestamp is derived from the latest LAST_UPDATE_DATE of the
+      activity. The analysis period is based on this completed timestamp.
+    technical:
+      silver_source: sap_c4c_follow_up_activities
+      gold_product: customer_enquiries_long
+      serve_stream: CUSTOMER_TESTDRIVES
+      measure_columns:
+        - test_drives_booked
+        - test_drives_completed
+        - test_drives_open
+        - test_drives_noshow
+        - test_drives_cancelled
+    notes: >-
+      The headline KPI is completed test drives. Booked / Open / No-show /
+      Cancelled are additional lifecycle measures on the same stage.
+
+  - name: Total Reservations
+    stage: 5
+    source_system: "SAP"
+    domain: ""
+    status: approved
+    definition: >-
+      Total number of reservation items (sum of item quantity) created during
+      the selected analysis period for the chosen brand.
+    pseudo_code: >-
+      Sum ITEM QUANTITY for reservation items where ORDER ITEM CREATION DATE is
+      within the selected analysis period and ORDER TYPE IN ('Standard Order',
+      'Fleet Order', 'AFM Corporate Order').
+    technical:
+      silver_source: [PAD_100_sales_document_header, PAD_100_sales_document_item_data]
+      gold_product: sales_ordr_vn_d
+      serve_stream: CUSTOMER_ORDERS
+      measure_columns: [total_order_items, orders, orders_with_deposite]
+    notes: >-
+      Not used by BYD. Available in BYD Dashboard legacy and Funnel 2.0.
+      Order types map to SAP codes ZOR / YOR / TA (Standard / Fleet / AFM
+      Corporate). `item_quantity` is a line flag, so SUM counts reservation
+      order line items. No `sales_group` filter — includes retail, fleet and
+      corporate.
+
+  - name: Invoices
+    stage: 6
+    source_system: "SAP"
+    domain: ""
+    status: approved
+    definition: >-
+      Total number of vehicle invoices generated during the selected analysis
+      period for the selected brand. A sold vehicle invoice adds 1 to the total,
+      while a reversed invoice subtracts 1. This gives the final number of
+      invoices after accounting for reversals.
+    pseudo_code: >-
+      For the selected period and brand, sum the invoice transaction value: +1
+      for sold invoices and -1 for reversed invoices. The result is the net
+      number of invoiced vehicles.
+    technical:
+      silver_source: PAD_100_billing_details_new
+      gold_product: sales_newu_usud_sals_vn_d_view
+      serve_stream: CUSTOMER_INVOICES
+      measure_columns: [invoices]
+    notes: >-
+      Net of reversals. Deduped via `flag_cancellation = 0`. New / Used split by
+      distribution channel (10 / 20). No `sales_group` filter.
+
+# -----------------------------------------------------------------------------
+# Supporting business terms — the vocabulary the KPI definitions rely on.
+# -----------------------------------------------------------------------------
+terms:
+  - term: LEAD_ID
+    definition: >-
+      The unique identifier of a lead in SAP C4C. Distinct LEAD_IDs are the
+      counting unit for the Leads and Hot Leads KPIs.
+    related: [Leads, Hot Leads, Walk-in]
+
+  - term: OPPORTUNITY_ID
+    definition: >-
+      The unique identifier of a C4C opportunity. One opportunity represents one
+      showroom visit; distinct OPPORTUNITY_IDs are the counting unit for Visits.
+    related: [Visits, Test Drives]
+
+  - term: Walk-in
+    definition: >-
+      A showroom visitor recorded without an originating LEAD_ID (a walk-in
+      enquiry where LEAD_ID is blank or null). Walk-ins are counted separately
+      and added to the Leads and Hot Leads totals so no in-person visitor is
+      missed.
+    related: [Leads, Hot Leads, LEAD_ID]
+
+  - term: Analysis period
+    definition: >-
+      The user-selected reporting date range a KPI is measured over. Each KPI
+      declares which timestamp anchors it to the period (e.g. lead creation
+      date, order item creation date, test-drive completion timestamp).
+    related: [Leads, Test Drives, Total Reservations, Invoices]
+
+  - term: Chosen brand / division
+    definition: >-
+      The vehicle brand (SAP division) the report is filtered to. Visits, Test
+      Drives, Total Reservations and Invoices are scoped to the selected brand.
+    related: [Visits, Total Reservations, Invoices]
+
+  - term: Qualification (Hot)
+    definition: >-
+      The C4C lead-qualification value that marks strong purchase intent. A lead
+      with QUALIFICATION = 'Hot' qualifies as a Hot Lead.
+    related: [Hot Leads]
+
+  - term: Pass to branch
+    definition: >-
+      The event of handing a lead to a branch for follow-up, timestamped by
+      PASS_TO_BRANCH_TIME. A lead with this timestamp set also qualifies as a
+      Hot Lead, even if not explicitly marked Hot.
+    related: [Hot Leads]
+
+  - term: Test-drive activity
+    definition: >-
+      A C4C follow-up activity with TYPE = 'Test Drive'. Its STATUS
+      ('Completed', open, no-show, cancelled) drives the Test Drives lifecycle
+      measures; STATUS = 'Completed' drives the headline KPI.
+    related: [Test Drives]
+
+  - term: Reservation item
+    definition: >-
+      A single sales-document line item of a reservation order. Total
+      Reservations sums the item quantity (a line flag) across reservation
+      items, so it counts line items rather than distinct orders.
+    related: [Total Reservations, Order type]
+
+  - term: Order type
+    definition: >-
+      The SAP sales-document type classifying a reservation. Reservations count
+      ORDER TYPE IN Standard Order (ZOR), Fleet Order (YOR) and AFM Corporate
+      Order (TA).
+    related: [Total Reservations, Reservation item]
+
+  - term: Invoice reversal
+    definition: >-
+      A cancellation of a previously issued invoice. In the Invoices KPI a sold
+      invoice contributes +1 and a reversal contributes -1, so the total is net
+      of reversals.
+    related: [Invoices]
+
+  - term: SAP C4C
+    definition: >-
+      SAP Cloud for Customer, the CRM system of record for the front of the
+      funnel — leads, opportunities (visits) and follow-up activities (test
+      drives).
+    related: [Leads, Hot Leads, Visits, Test Drives]
