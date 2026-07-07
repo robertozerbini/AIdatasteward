@@ -328,8 +328,6 @@ funnel_groups:
     the record's normalized SOURCE, rolled up to TYPE, then to GROUP, using the
     lead / enquiry type mapping (`lead_type_mapping_new`).
 
-  # Parsing notes flagged for steward confirmation (see README). A few rows in
-  # the source list were ambiguous; the assumed split is marked `assumed: true`.
   groups:
     - name: Digital
       definition: >-
@@ -343,8 +341,8 @@ funnel_groups:
     - name: Others
       definition: >-
         Non-digital, non-walk-in channels — B2B / fleet, events, print, SMS,
-        telephone, lease returns (GFV / Hertz / Affinity), referrals, migrated
-        and re-solicitation records.
+        telephone, showroom promotions / re-solicitation, generic product / offer
+        / appointment / prospect enquiries, referrals and migrated records.
     - name: Unclassified
       definition: >-
         Records whose GROUP / TYPE / SOURCE do not map to any known channel
@@ -384,78 +382,74 @@ funnel_groups:
         Not yet implemented — will follow the Total Reservations rule (inherited
         from the linked enquiry) once the metric is built.
 
-  # Authoritative SOURCE/TYPE -> GROUP mapping (order preserved from source).
-  # null = unmapped / not applicable. `assumed` flags a parsing assumption.
+  # Authoritative lead_group / lead_type / lead_source mapping, confirmed by the
+  # steward (order and casing preserved from the source list). null = no source.
   mapping:
-    - {group: null, type: null, source: null}
-
-    - {group: Digital, type: Blue, source: Book A Service, assumed: true}
-    - {group: Digital, type: Blue, source: General Enquiry}
-    - {group: Digital, type: Blue, source: Loan Eligibility Form}
-    - {group: Digital, type: Blue, source: Mobile Service}
-    - {group: Digital, type: Blue, source: Sell Your Car Form}
-    - {group: Digital, type: Blue, source: Test Drive Form}
-    - {group: Digital, type: Crm, source: General Enquiry}
-    - {group: Digital, type: Live Chat, source: Cec}
-    - {group: Digital, type: Live Chat, source: Live Chat}
-    - {group: Digital, type: Live Chat, source: V24}
     - {group: Digital, type: Live Chat, source: Whatsapp}
-    - {group: Digital, type: Live Chat, source: Whatsapp Chatbot}
-    - {group: Digital, type: Social, source: Bulk Lead}
-    - {group: Digital, type: Social, source: Facebook}
     - {group: Digital, type: Social, source: Instagram}
+    - {group: Digital, type: Web, source: Sell Your Car Form}
+    - {group: Digital, type: Live Chat, source: V24}
+    - {group: Digital, type: Web, source: Outbound Call}
+    - {group: Digital, type: Live Chat, source: Whatsapp Chatbot}
+    - {group: Digital, type: Blue, source: Loan Eligibility Form}
+    - {group: Digital, type: Web, source: Offer Form}
+    - {group: Digital, type: Social, source: Bulk Lead}
     - {group: Digital, type: Social, source: Linkedin}
-    - {group: Digital, type: Social, source: Snapchat}
-    - {group: Digital, type: Social, source: Tiktok}
-    - {group: Digital, type: Social, source: Youtube}
-    - {group: Digital, type: Web, source: Ai Sales Agent}
-    - {group: Digital, type: Web, source: Carswitch}
     - {group: Digital, type: Web, source: Dubizzle}
-    - {group: Digital, type: Web, source: Ecomm}
-    - {group: Digital, type: Web, source: Email}
+    - {group: Digital, type: Web, source: Web Chatbot}
+    - {group: Digital, type: Blue, source: General Enquiry}
+    - {group: Digital, type: Social, source: Tiktok}
+    - {group: Digital, type: Web, source: Trade-in Form}
     - {group: Digital, type: Web, source: Enquiry Form}
+    - {group: Digital, type: Web, source: Ai Sales Agent}
+    - {group: Digital, type: Blue, source: Test Drive Form}
+    - {group: Digital, type: Web, source: Inbound Call}
+    - {group: Digital, type: Social, source: Facebook}
+    - {group: Digital, type: Web, source: Loan Eligibility Form}
+    - {group: Digital, type: Web, source: Test Drive Form}
+    - {group: Digital, type: Social, source: Youtube}
+    - {group: Digital, type: CRM, source: General Enquiry}
+    - {group: Digital, type: Web, source: Carswitch}
+    - {group: Digital, type: Web, source: Insider}
+    - {group: Digital, type: Web, source: Web Form}
+    - {group: Digital, type: Social, source: Snapchat}
     - {group: Digital, type: Web, source: Finance Form}
     - {group: Digital, type: Web, source: Google Analytics}
-    - {group: Digital, type: Web, source: Inbound Call}
-    - {group: Digital, type: Web, source: Insider}
-    - {group: Digital, type: Web, source: Internal}
-    - {group: Digital, type: Web, source: Loan Eligibility Form}
-    - {group: Digital, type: Web, source: Offer Form}
-    - {group: Digital, type: Web, source: Outbound Call}
+    - {group: Digital, type: Live Chat, source: Cec}
     - {group: Digital, type: Web, source: Principle Website}
-    - {group: Digital, type: Web, source: Sell Your Car Form}
-    - {group: Digital, type: Web, source: Test Drive Form}
-    - {group: Digital, type: Web, source: Trade-in Form}
-    - {group: Digital, type: Web, source: Web Chatbot}
-    - {group: Digital, type: Web, source: Web Form}
+    - {group: Digital, type: Web, source: Email}
+    - {group: Digital, type: Web, source: Internal}
+    - {group: Digital, type: Live Chat, source: Live Chat}
+    - {group: Digital, type: Blue, source: Book A Service}
+    - {group: Digital, type: Blue, source: Sell Your Car Form}
 
-    - {group: Others, type: null, source: null}
-    - {group: Others, type: Aff Lease, source: null, assumed: true}
-    - {group: Others, type: B2b, source: Campaign}
-    - {group: Others, type: B2b, source: Field Visit}
-    - {group: Others, type: B2b, source: General Enquiry}
-    - {group: Others, type: B2b, source: Referral}
-    - {group: Others, type: B2b, source: Repeat Purchase}
-    - {group: Others, type: B2b, source: Walk-in}
-    - {group: Others, type: Events, source: Events}
-    - {group: Others, type: Events, source: Gov Program}
-    - {group: Others, type: Events, source: Trade Fair}
-    - {group: Others, type: Gfv Return, source: null}
-    - {group: Others, type: Hertz Lease Return, source: null}
-    - {group: Others, type: Others, source: Migrated}
+    - {group: Others, type: SMS, source: Sms}
+    - {group: Others, type: TELEPHONE, source: null}
+    - {group: Others, type: B2B, source: General Enquiry}
+    - {group: Others, type: Showroom, source: Resolicitation}
     - {group: Others, type: Others, source: Others}
     - {group: Others, type: Others, source: Reference}
-    - {group: Others, type: Print, source: Newspaper}
-    - {group: Others, type: Showroom, source: Promotions}
-    - {group: Others, type: Showroom, source: Resolicitation}
-    - {group: Others, type: Sms, source: Sms}
-    - {group: Others, type: Telephone, source: null}
     - {group: Others, type: Telephone, source: Telephone}
-    - {group: Others, type: Web, source: null}
-    - {group: Others, type: Web, source: Re-solicitation, assumed: true}
+    - {group: Others, type: B2B, source: Campaign}
+    - {group: Others, type: WEB, source: null}
+    - {group: Others, type: Showroom, source: Promotions}
+    - {group: Others, type: Others, source: Migrated}
+    - {group: Others, type: ENQUIRY ABOUT PRODUCTS, source: null}
+    - {group: Others, type: B2B, source: Bulk Lead}
+    - {group: Others, type: B2B, source: Repeat Purchase}
+    - {group: Others, type: B2B, source: Field Visit}
+    - {group: Others, type: B2B, source: Walk-in}
+    - {group: Others, type: B2B, source: Referral}
+    - {group: Others, type: Events, source: Trade Fair}
+    - {group: Others, type: APPOINTMENT REQUEST, source: null}
+    - {group: Others, type: Events, source: Events}
+    - {group: Others, type: PROSPECT, source: null}
+    - {group: Others, type: Print, source: Newspaper}
+    - {group: Others, type: ENQUIRY ABOUT OFFER, source: null}
+    - {group: Others, type: Events, source: Gov Program}
 
-    - {group: Walk-in, type: Pop-up Lead, source: Pop-up, assumed: true}
-    - {group: Walk-in, type: Pop-up Sales, source: Pop-up, assumed: true}
-    - {group: Walk-in, type: Walk-in, source: Ghq Id}
-    - {group: Walk-in, type: Walk-in, source: Walk-in}
-    - {group: Walk-in, type: Walk-in, source: Warrah}
+    - {group: Walk-in, type: Walk-In, source: Walk-in}
+    - {group: Walk-in, type: Walk-In, source: Warrah}
+    - {group: Walk-in, type: Pop-up, source: Sales Pop-up}
+    - {group: Walk-in, type: Pop-up, source: Lead Pop-up}
+    - {group: Walk-in, type: Walk-In, source: Ghq Id}

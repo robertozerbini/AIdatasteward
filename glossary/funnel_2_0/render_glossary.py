@@ -171,21 +171,19 @@ def render_funnel_groups(data: dict) -> str:
         out.append(f"| **{_cell(row['kpi'])}** | {_cell(row['rule'])} |")
     out.append("")
 
-    # Full SOURCE/TYPE -> GROUP mapping.
-    out.append("## Classification mapping (SOURCE + TYPE → GROUP)\n")
+    # Full lead_source + lead_type -> lead_group mapping.
+    out.append("## Classification mapping (lead_source + lead_type → lead_group)\n")
     out.append(
-        "The authoritative lookup, applied via `lead_type_mapping_new`. "
-        "Rows marked ⚠ are parsing assumptions pending confirmation.\n"
+        f"The authoritative lookup ({len(fg['mapping'])} rows), applied via "
+        "`lead_type_mapping_new`. `null` = no source value.\n"
     )
-    out.append("| GROUP | TYPE | SOURCE | |")
-    out.append("|-------|------|--------|--|")
+    out.append("| lead_group | lead_type | lead_source |")
+    out.append("|------------|-----------|-------------|")
     for m in fg["mapping"]:
-        flag = "⚠" if m.get("assumed") else ""
         out.append(
             f"| {_cell(m.get('group'))} "
             f"| {_cell(m.get('type'))} "
-            f"| {_cell(m.get('source'))} "
-            f"| {flag} |"
+            f"| {_cell(m.get('source')) if m.get('source') is not None else '`null`'} |"
         )
     out.append("")
     out.append("---\n")
