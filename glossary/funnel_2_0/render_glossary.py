@@ -55,6 +55,7 @@ def _cell(text: str) -> str:
 _STATUS_LABELS = {
     "approved": "Approved",
     "under_approval": "Under approval",
+    "proposed": "Proposed — for discussion",
     "draft": "Draft",
     "deprecated": "Deprecated",
 }

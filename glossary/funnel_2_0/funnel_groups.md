@@ -21,6 +21,7 @@ Funnel groups classify where demand originated so every key funnel KPI (Leads �
 | **Visits** | Native — from the opportunity / enquiry source → type → GROUP. |
 | **Test Drives** | Inherited from the parent enquiry's group (a test drive is a follow-up activity on the enquiry). |
 | **Total Reservations** | Inherited from the linked enquiry via `enquiry_id`; Digital is captured as the `web_attributed_*` measures through the lead back-join (`sales_group IN ('001','040')`). Orders with no enquiry link are Unclassified for group. |
+| **Total Reservation (Proposed — unique orders)** | Proposed — same enquiry-inherited grouping as Total Reservations, just counted per distinct order rather than per line item. |
 | **Invoices** | Inherited from the linked order → enquiry (`sales_order_number → enquiry_id`); Digital via the `web_attributed_*` back-join, same as Total Reservations. |
 | **Total Open Reservations (Reservation Bank)** | Not yet implemented — will follow the Total Reservations rule (inherited from the linked enquiry) once the metric is built. |
 

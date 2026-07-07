@@ -146,11 +146,36 @@ kpis:
       serve_stream: CUSTOMER_ORDERS
       measure_columns: [total_order_items, orders, orders_with_deposite]
     notes: >-
-      Not used by BYD. Available in BYD Dashboard legacy and Funnel 2.0.
-      Order types map to SAP codes ZOR / YOR / TA (Standard / Fleet / AFM
-      Corporate). `item_quantity` is a line flag, so SUM counts reservation
-      order line items. No `sales_group` filter — includes retail, fleet and
-      corporate.
+      Current implementation in Funnel 2.0. Not used by BYD (available in BYD
+      Dashboard legacy and Funnel 2.0). Order types map to SAP codes ZOR / YOR /
+      TA (Standard / Fleet / AFM Corporate). `item_quantity` is a line flag, so
+      SUM counts reservation order line items. No `sales_group` filter — includes
+      retail, fleet and corporate. See the proposed unique-orders alternative
+      below.
+
+  - name: Total Reservation (Proposed — unique orders)
+    stage: 5
+    source_system: "SAP"
+    domain: ""
+    status: proposed
+    implemented: false
+    definition: >-
+      Number of unique reservations (sales order numbers) created during the
+      selected analysis period.
+    pseudo_code: >-
+      Count distinct ORDER NUMBER where ORDER CREATION DATE is within the
+      selected analysis period and ORDER TYPE IN ('Standard Order', 'Fleet
+      Order', 'AFM Corporate Order').
+    technical:
+      silver_source: [PAD_100_sales_document_header, PAD_100_sales_document_item_data]
+      gold_product: sales_ordr_vn_d
+      measure_columns: []
+    notes: >-
+      Proposed alternative to the current Total Reservations KPI, raised for
+      discussion. Counts one reservation per order (distinct order number)
+      instead of summing item quantities. Requires a process change so that one
+      order carries one VIN / order item — today multiple order items are allowed
+      per order, which is why the current KPI sums line items. Not implemented.
 
   - name: Invoices
     stage: 6
@@ -372,6 +397,10 @@ funnel_groups:
         as the `web_attributed_*` measures through the lead back-join
         (`sales_group IN ('001','040')`). Orders with no enquiry link are
         Unclassified for group.
+    - kpi: Total Reservation (Proposed — unique orders)
+      rule: >-
+        Proposed — same enquiry-inherited grouping as Total Reservations, just
+        counted per distinct order rather than per line item.
     - kpi: Invoices
       rule: >-
         Inherited from the linked order → enquiry (`sales_order_number →

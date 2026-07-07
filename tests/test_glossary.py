@@ -19,6 +19,7 @@ FUNNEL_KPIS = [
     "Visits",
     "Test Drives",
     "Total Reservations",
+    "Total Reservation (Proposed — unique orders)",
     "Invoices",
     "Total Open Reservations (Reservation Bank)",
 ]
