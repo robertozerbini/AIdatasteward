@@ -47,7 +47,7 @@ field in `prsls_ldmg_actv_dy`; the funnel notebook builds one stream per KPI fam
 | 2 | **Hot Leads** | `sap_c4c_leads` | `customer_leads_long` | `CUSTOMER_LEADS` | `hot_leads`, `hot_leads_without_walkins` |
 | 3 | **Visits** (opportunities) | `sap_c4c_opportunity_header`, `sap_c4c_opportunity_item` | `customer_enquiries_long` | `CUSTOMER_ENQUIRIES` | `opportunities`, `open_opportunities_14d` |
 | 4 | **Test Drives** | `sap_c4c_follow_up_activities` | `customer_enquiries_long` | `CUSTOMER_TESTDRIVES` | `test_drives_booked`, `test_drives_completed`, `test_drives_oepn`, `test_drives_noshow`, `test_drives_cancelled` |
-| 5 | **Total Reservation** | — | — | `CUSTOMER_ORDERS` ← `sales_ordr_vn_d` | `total_order_items` (SUM item_quantity), `orders`, `orders_with_deposite`, `reservation_items_*` |
+| 5 | **Total Reservation** | `PAD_100_sales_document_header` ⋈ `PAD_100_sales_document_item_data` | `sales_ordr_vn_d` | `CUSTOMER_ORDERS` ← `sales_ordr_vn_d` | `total_order_items` (SUM item_quantity), `orders`, `orders_with_deposite`, `reservation_items_*` |
 | 6 | **Invoices** | `PAD_100_billing_details_new` (billing) | `sales_newu_sals_vn_d` (new) + `sales_usdu_sals_vn_d` (used) → `sales_newu_usud_sals_vn_d_view` | `CUSTOMER_INVOICES` ← `sales_newu_usud_sals_vn_d_view` | `invoices` |
 
 Every KPI also has a **`web_attributed_*`** counterpart (web/social origin, plus walk-ins
@@ -58,19 +58,22 @@ breakdowns (`lost_oppo_*`).
 > order types (`ZOR`/`YOR`/`TA` = Standard / Fleet / AFM Corporate) with **no `sales_group`
 > filter**; Invoices count **all** billing lines (`sales_volume_quantity`, deduped via
 > `flag_cancellation = 0`) with no `sales_group` filter — so both include retail, fleet and
-> corporate. The enquiry join
+ corporate. The enquiry join
 > (`sales_ordr_vn_d.enquiry_id → customer_enquiries_long`) is `LEFT`, so orders with no C4C
-> enquiry — fleet / corporate / direct, whose `enquiry_id` is a constructed `org+div+office`
-> token like `209226Y211`, expected because **C4C is retail-focused** — still count in the KPI
-> but carry no enquiry link. The **`web_attributed_*`** metrics are additionally scoped to
-> **retail / ecommerce only** via the lead back-join filter `sales_group IN ('001','040')`, so
-> fleet / corporate and unattributed reservations are deliberately excluded from web attribution.
+> enquiry — fleet / corporate / direct — still count in the KPI but carry no enquiry link.
+> The **`web_attributed_*`** metrics are additionally scoped to **retail / ecommerce only** via
+> the lead back-join filter `sales_group IN ('001','040')`, so fleet / corporate and unattributed
+> reservations are deliberately excluded from web attribution.
 >
-> Unattributed reservations fall into two root causes:
-> - **`enquiry_id` present but not in gold → opportunity-id leakage** — the order references an
->   opportunity/enquiry that never landed in `customer_enquiries_long` (enquiries-pipeline gap).
-> - **`enquiry_id` null → missing mapping in SAP** — the order was never linked to an
->   opportunity at source (typical for fleet / corporate / direct).
+> **Where `enquiry_id` comes from.** In the `sales_ordr_vn_d` build, `enquiry_id =
+> LPAD(opportunity_number, 10)` sourced from `PAD_100_purchase_agreement_form_from_c4c` (joined on
+> `sales_document`). An order only carries an `enquiry_id` when SAP recorded a C4C purchase-agreement
+> form linking it to an opportunity. Unattributed reservations therefore fall into two root causes:
+> - **`enquiry_id` present but not in gold → opportunity-id leakage** — the purchase-agreement form's
+>   `opportunity_number` never landed in `customer_enquiries_long` (enquiries-pipeline gap). It may be
+>   `numeric` (a real opportunity id that leaked) or a `non-numeric token` like `209226Y211`.
+> - **`enquiry_id` null → missing mapping in SAP** — no purchase-agreement-form row exists for the
+>   order, so it was never linked to an opportunity at source (typical for fleet / corporate / direct).
 
 ### KPI definitions (business logic)
 
@@ -80,7 +83,7 @@ breakdowns (`lost_oppo_*`).
 | **Hot Leads** | Lead where `lead_qualification = 'Hot'` **or** `pass_to_branch_time IS NOT NULL`. |
 | **Visits** | `COUNT(1)` opportunities in `customer_enquiries_long`; `open_opportunities_14d` = still `Open` with test-drive gap > 15 days. |
 | **Test Drives** | Booked = any test-drive open/complete/cancel time; Completed = `testdrive_time` set; Open / No-show / Cancelled derived from open time vs `CURRENT_DATE` and cancel time. |
-| **Orders** | `COUNT(DISTINCT sales_document)` from `sales_ordr_vn_d` where `order_type IN ('ZOR','YOR','TA')`; item counts use `SUM(item_quantity)`. |
+| **Total Reservation** | `SUM(item_quantity)` from `sales_ordr_vn_d` where `order_type IN ('ZOR','YOR','TA')`, by `sales_item_creation_date`. `item_quantity = CASE WHEN sales_document_item IS NOT NULL THEN 1` (a line flag), so the sum counts reservation order line items. `orders` = `COUNT(DISTINCT sales_document)` (context, not the KPI). |
 | **Invoices** | `SUM(invoices)` from `sales_newu_usud_sals_vn_d_view`, where `invoices = sales_volume_quantity` (billing-line volume) dated by `billing_date`. Deduped via `flag_cancellation = 0` (drops cancellation lines `qty = -1`, superseded rebills, and non-latest duplicate billing documents per batch). New / Used split by distribution channel (10 / 20). |
 
 ---
@@ -190,6 +193,38 @@ Filter `sales_orgnisation_code <> '5000'`.
 | `lead_type_mapping_new` | normalized `enquiry_source` | type / group |
 | `customer_leads_long` | `lead_id` (pop-up leads) | walk-in flag |
 
+### `sales_ordr_vn_d` — Total Reservation (Orders)
+Driven by **`PAD_100_sales_document_header` (`h`) ⋈ `PAD_100_sales_document_item_data` (`i`)** on
+`sales_document`, filtered to `record_creation_date >= '2020-01-01'` and
+`distribution_channel IN ('10','20')`. Grain is one row per sales-document item (× linked vehicle),
+deduped with `SELECT DISTINCT` and an `ITEM_RANK` window.
+
+Core columns:
+- `item_quantity = CASE WHEN sales_document_item IS NOT NULL THEN 1` — a **line flag**, so
+  `SUM(item_quantity)` counts reservation order line items (the KPI).
+- `order_type = h.sales_document_type`; reservation types are `ZOR` / `YOR` / `TA`.
+- `sales_item_creation_date = i.record_creation_date`; `org_key = sales_organization · division · sales_office`.
+- **`enquiry_id = LPAD(opportunity_number, 10)`** from `PAD_100_purchase_agreement_form_from_c4c`
+  (`sales_document → opportunity`) — the attribution key into `customer_enquiries_long`. Null when no
+  purchase-agreement form exists (see the attribution-scope note above).
+
+| Joined object | Join key | Purpose |
+|---------------|----------|---------|
+| `eudu_mdata_dtac_orgstrc` | `org_key` | org / division / sales-office descriptions (same master as the funnel) |
+| `PAD_100_purchase_agreement_form_from_c4c` ⋈ `sap_c4c_quotation_header` ⋈ `sap_c4c_opportunity_header` | `sales_document` → `opportunity` → `quotation` | C4C enquiry / quotation link |
+| `cdm_automotive_vehicle_vin_master` (+ `velo_vehicle_history`, status/availability texts) | `batch_number` / `vehicle_guid` | VIN, vehicle status, availability |
+| `PAD_100_sales_document_flow` ⋈ `PAD_100_billing_document_header_data` | `sales_document` | billing / deposit (`FAZ`) / invoice (`F2`) dates |
+| `PAD_100_accounting_document_segment` | `sales_document` (special GL `A`) | down-payment (`DWPYMNT`) |
+| sales group / dist channel / customer / employee / material / item-category / rejection texts | respective code | descriptions |
+
+Business flags derived here: `customer_tagged`, `customer_linked` (retail-linked reservation, `+1`/`-1`),
+`byd_live_orders`, and `link` / `link_date` / `linkage_age_days` (vehicle linkage via DBM sales order or
+reservation details).
+
+> Silver → Gold here is the raw `h ⋈ i` line count vs the enriched product: they differ by the
+> vehicle-link fan-out + `DISTINCT` and the vehicle/status/rejection filters the product applies —
+> so a Silver ↔ Gold gap for Total Reservation is expected (informational), not data loss.
+
 ### `sales_newu_usud_sals_vn_d_view` — Invoices
 Two sibling builds unioned into the serving view:
 
@@ -255,6 +290,8 @@ All joins are `LEFT OUTER` unless noted; cardinality is stated from the left (dr
 | `sap_c4c_leads` | `sap_c4c_follow_up_activities` | `c4cleadid = lead_id` | 1 : 1&nbsp;* |
 | `sap_c4c_opportunity_header` | `sap_c4c_opportunity_item` | `opportunity_id` | 1 : 1&nbsp;* |
 | `customer_enquiries_long` | `customer_leads_long` | `lead_id` · `info_source_type_cd` | N : 1 |
+| `PAD_100_sales_document_header` | `PAD_100_sales_document_item_data` | `sales_document` | 1 : N |
+| `sales_ordr_vn_d` | `PAD_100_purchase_agreement_form_from_c4c` | `sales_document` → `enquiry_id` | N : 1 |
 | `sales_ordr_vn_d` | `customer_enquiries_long` | `enquiry_id` | N : 1 |
 | `sales_newu_usud_sals_vn_d_view` | `sales_ordr_vn_d` | `sales_order_number = sales_document` | N : 1 |
 | `customer_enquiries_long` | `customer_leads_long` (web attribution) | `right(mobile,9)` · `division` · date ±120d | N : 1 |

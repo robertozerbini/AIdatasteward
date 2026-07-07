@@ -151,6 +151,22 @@ Filter `sales_orgnisation_code <> '5000'`.
 | `lead_type_mapping_new` | normalized `enquiry_source` | type / group |
 | `customer_leads_long` | `lead_id` (pop-up leads) | walk-in flag |
 
+### `sales_ordr_vn_d` (order fact)
+Not a leaf — driven by **`PAD_100_sales_document_header` (`h`) ⋈ `PAD_100_sales_document_item_data`
+(`i`)** on `sales_document` (`distribution_channel IN ('10','20')`, `record_creation_date >= 2020`).
+
+| Joined object | Join key | Purpose |
+|---------------|----------|---------|
+| `PAD_100_purchase_agreement_form_from_c4c` | `sales_document` → `opportunity_number` | `enquiry_id = LPAD(opportunity_number, 10)` (C4C attribution key) |
+| `sap_c4c_quotation_header` ⋈ `sap_c4c_opportunity_header` | `opportunity` / `quotation` | quotation / enquiry link |
+| `eudu_mdata_dtac_orgstrc` | `org_key` | org / division / office descriptions |
+| `cdm_automotive_vehicle_vin_master` (+ history / status texts) | `batch_number` / `vehicle_guid` | VIN, vehicle status |
+| `PAD_100_sales_document_flow` ⋈ `PAD_100_billing_document_header_data` | `sales_document` | billing / deposit (`FAZ`) / invoice (`F2`) dates |
+| `PAD_100_accounting_document_segment` | `sales_document` | down-payment |
+
+Reservation measure `item_quantity = CASE WHEN sales_document_item IS NOT NULL THEN 1` (line flag) at
+`sales_item_creation_date = i.record_creation_date`; reservation types `order_type IN ('ZOR','YOR','TA')`.
+
 ### `sales_newu_usud_sals_vn_d_view` (invoice fact)
 Not a leaf — the invoice serving view is a `UNION` of two curated builds:
 `sales_newu_sals_vn_d` (new units, `distribution_channel = 10`) and `sales_usdu_sals_vn_d`
