@@ -106,6 +106,22 @@ def render_kpis(data: dict) -> str:
         )
     out.append("")
 
+    # Measurement details — grain / time anchor / scope (precision that the
+    # verbatim workbook definitions leave implicit).
+    if any(k.get("measurement") for k in kpis):
+        out.append("## Measurement details\n")
+        out.append("| KPI | Grain (counting unit) | Time anchor | Scope |")
+        out.append("|-----|-----------------------|-------------|-------|")
+        for k in kpis:
+            m = k.get("measurement", {})
+            out.append(
+                f"| **{_cell(k['name'])}** "
+                f"| {_cell(m.get('grain'))} "
+                f"| {_cell(m.get('time_anchor'))} "
+                f"| {_cell(m.get('scope'))} |"
+            )
+        out.append("")
+
     # Lineage reference (kept separately so the dictionary stays readable).
     out.append("## Lineage reference\n")
     out.append("| KPI | Silver source | Gold product | Serving stream | Measure column(s) |")
@@ -120,6 +136,21 @@ def render_kpis(data: dict) -> str:
             f"| {_code_join(tech.get('measure_columns'))} |"
         )
     out.append("")
+
+    # Data-quality invariants — testable contracts for the dq_framework asserts.
+    invariants = data.get("dq_invariants") or []
+    if invariants:
+        out.append("## Data-quality invariants\n")
+        out.append(
+            "Relationships that should hold within a single reporting period — "
+            "checkable by the `kpi` asserts in `dq_framework`. Cross-stage funnel "
+            "drop-off is an expected trend, not a hard invariant (stage lag).\n"
+        )
+        out.append("| Invariant | Why |")
+        out.append("|-----------|-----|")
+        for inv in invariants:
+            out.append(f"| `{_cell(inv['rule'])}` | {_cell(inv.get('rationale'))} |")
+        out.append("")
 
     out.append("---\n")
     out.append(

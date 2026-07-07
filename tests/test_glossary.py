@@ -51,6 +51,18 @@ def test_every_kpi_is_fully_defined():
         # not-yet-implemented KPI legitimately has none yet.
         if kpi.get("implemented", True):
             assert kpi["technical"].get("measure_columns"), kpi["name"]
+        # Every KPI states its measurement basis.
+        m = kpi.get("measurement", {})
+        for field in ("grain", "time_anchor", "scope"):
+            assert m.get(field), f"{kpi.get('name')!r} is missing measurement.{field}"
+
+
+def test_dq_invariants_are_well_formed():
+    data = yaml.safe_load(SOURCE.read_text(encoding="utf-8"))
+    invariants = data.get("dq_invariants")
+    assert invariants, "no dq_invariants defined"
+    for inv in invariants:
+        assert inv.get("rule") and inv.get("rationale"), inv
 
 
 def test_funnel_group_mapping_is_consistent():

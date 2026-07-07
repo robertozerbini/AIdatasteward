@@ -17,7 +17,7 @@ a single agreed definition.
 | File | What it is |
 |------|-----------|
 | **[`glossary.yaml`](glossary.yaml)** | **Single source of truth.** Machine-readable KPI + term definitions. Edit this. |
-| [`kpis.md`](kpis.md) | Generated. The funnel KPIs — status, definition, source, pseudo-code, note (+ lineage reference). |
+| [`kpis.md`](kpis.md) | Generated. The funnel KPIs — status, definition, source, pseudo-code, note, measurement details (grain / time anchor / scope), lineage, and data-quality invariants. |
 | [`funnel_groups.md`](funnel_groups.md) | Generated. The Digital / Walk-in / Others channel split, how each KPI is grouped, and the full SOURCE/TYPE → GROUP mapping. |
 | [`terms.md`](terms.md) | Generated. Supporting business vocabulary (LEAD_ID, walk-in, order type…). |
 | [`render_glossary.py`](render_glossary.py) | Regenerates `kpis.md`, `funnel_groups.md` and `terms.md` from `glossary.yaml`. |
@@ -44,6 +44,21 @@ To change a definition, add a KPI, or add a term:
    ```
 3. Bump `meta.version` / `meta.last_reviewed` in `glossary.yaml` for a material
    change, and commit `glossary.yaml` together with the regenerated markdown.
+
+### Open decisions
+
+Tracked in the definitions (search the YAML / `kpis.md`):
+
+- **`open_opportunities_14d` threshold** — column says `14d`, `docs/Funnel2.0.md`
+  says "> 15 days". The build (`customer_enquiries_long`) is not in this repo;
+  confirm 14 vs 15 days against that pipeline and update the Visits note.
+- **Reservation counting basis** — current Total Reservations (line items) vs the
+  proposed unique-orders KPI. Awaiting a steward decision (see the two adjacent
+  KPI rows).
+
+Resolved and recorded: walk-ins currently count in full toward Hot Leads
+(intended, flagged as a simplification); the test-drive "open" column is the
+misspelled `test_drives_oepn` (kept to match the physical schema).
 
 ### Funnel groups
 

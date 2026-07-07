@@ -49,9 +49,17 @@ kpis:
       gold_product: customer_leads_long
       serve_stream: CUSTOMER_LEADS
       measure_columns: [leads, leads_without_walkins]
+    measurement:
+      grain: >-
+        Distinct lead (LEAD_ID), plus walk-in enquiries with no LEAD_ID added on
+        top.
+      time_anchor: Lead creation date.
+      scope: Sales org 5000 excluded. All channels and brands.
     notes: >-
       Org 5000 is excluded throughout. `leads_without_walkins` excludes
-      pop-up / walk-in leads.
+      pop-up / walk-in leads. The added walk-ins are exactly those with a
+      blank / null LEAD_ID, so they cannot overlap the distinct-LEAD_ID count
+      (no double counting).
 
   - name: Hot Leads
     stage: 2
@@ -74,9 +82,18 @@ kpis:
       gold_product: customer_leads_long
       serve_stream: CUSTOMER_LEADS
       measure_columns: [hot_leads, hot_leads_without_walkins]
+    measurement:
+      grain: >-
+        Distinct lead (LEAD_ID) meeting the Hot rule, plus walk-in enquiries
+        with no LEAD_ID added on top.
+      time_anchor: Lead creation date.
+      scope: Sales org 5000 excluded.
     notes: >-
       A subset of Leads. Qualification is `lead_qualification = 'Hot'` OR
-      `pass_to_branch_time IS NOT NULL`.
+      `pass_to_branch_time IS NOT NULL`. Current behaviour: **every walk-in
+      enquiry is counted as a Hot Lead** (walk-ins are added to the total in
+      full, not only qualified ones) — confirmed as intended, flagged here as a
+      known simplification.
 
   - name: Visits
     stage: 3
@@ -94,9 +111,18 @@ kpis:
       gold_product: customer_enquiries_long
       serve_stream: CUSTOMER_ENQUIRIES
       measure_columns: [opportunities, open_opportunities_14d]
+    measurement:
+      grain: >-
+        Distinct opportunity (OPPORTUNITY_ID). "Visit" = opportunity, not a
+        verified physical showroom visit.
+      time_anchor: Opportunity creation date.
+      scope: Sales org 5000 excluded. Selected brand / division.
     notes: >-
       A showroom visit is modelled as a C4C opportunity. `open_opportunities_14d`
-      = opportunity still Open with a test-drive gap > 15 days.
+      = opportunity still Open with a test-drive gap threshold. **To verify:** the
+      column name says `14d` but `docs/Funnel2.0.md` describes the threshold as
+      "> 15 days" — the build (`customer_enquiries_long`) is not in this repo, so
+      the actual value (14 vs 15 days) must be confirmed against that pipeline.
 
   - name: Test Drives
     stage: 4
@@ -120,12 +146,20 @@ kpis:
       measure_columns:
         - test_drives_booked
         - test_drives_completed
-        - test_drives_open
+        - test_drives_oepn
         - test_drives_noshow
         - test_drives_cancelled
+    measurement:
+      grain: >-
+        Completed test-drive activity on an opportunity (TYPE = 'Test Drive',
+        STATUS = 'Completed').
+      time_anchor: Test-drive completion timestamp (latest LAST_UPDATE_DATE).
+      scope: Selected brand / division.
     notes: >-
       The headline KPI is completed test drives. Booked / Open / No-show /
-      Cancelled are additional lifecycle measures on the same stage.
+      Cancelled are additional lifecycle measures on the same stage. The "open"
+      measure column is spelled `test_drives_oepn` (a typo in the physical
+      schema — kept as-is so the glossary matches the real column).
 
   - name: Total Reservations
     stage: 5
@@ -145,6 +179,14 @@ kpis:
       gold_product: sales_ordr_vn_d
       serve_stream: CUSTOMER_ORDERS
       measure_columns: [total_order_items, orders, orders_with_deposite]
+    measurement:
+      grain: >-
+        Reservation order line item. `item_quantity` is a =1 line flag, so the
+        SUM is a count of line items, not a sum of vehicle quantities.
+      time_anchor: Order item creation date (`sales_item_creation_date`).
+      scope: >-
+        Order type ZOR / YOR / TA. No `sales_group` filter — includes retail,
+        fleet and corporate.
     notes: >-
       Current implementation in Funnel 2.0. Not used by BYD (available in BYD
       Dashboard legacy and Funnel 2.0). Order types map to SAP codes ZOR / YOR /
@@ -170,6 +212,12 @@ kpis:
       silver_source: [PAD_100_sales_document_header, PAD_100_sales_document_item_data]
       gold_product: sales_ordr_vn_d
       measure_columns: []
+    measurement:
+      grain: Distinct reservation order (sales order number).
+      time_anchor: Order creation date.
+      scope: >-
+        Order type ZOR / YOR / TA. Assumes a one-order-one-VIN process change
+        (see notes).
     notes: >-
       Proposed alternative to the current Total Reservations KPI, raised for
       discussion. Counts one reservation per order (distinct order number)
@@ -197,6 +245,14 @@ kpis:
       gold_product: sales_newu_usud_sals_vn_d_view
       serve_stream: CUSTOMER_INVOICES
       measure_columns: [invoices]
+    measurement:
+      grain: >-
+        Net billing-line volume (`sales_volume_quantity`): +1 per sold invoice,
+        -1 per reversal.
+      time_anchor: Billing date (`billing_date`).
+      scope: >-
+        Deduped to `flag_cancellation = 0`. New / Used split by distribution
+        channel (10 / 20). No `sales_group` filter.
     notes: >-
       Net of reversals. Deduped via `flag_cancellation = 0`. New / Used split by
       distribution channel (10 / 20). No `sales_group` filter.
@@ -219,11 +275,42 @@ kpis:
     technical:
       silver_source: []
       measure_columns: []
+    measurement:
+      grain: >-
+        Open reservation item quantity as of the snapshot; duplicate VIN rows
+        removed.
+      time_anchor: Snapshot (as-of) date — a point-in-time balance, not a period sum.
+      scope: >-
+        Sales order number not starting '0020' / '0060'; no reason for rejection;
+        secondary status 'Sales Order Created' or blank.
     notes: >-
       New KPI — not yet implemented in the Funnel 2.0 pipeline; lineage and
       measure columns to be defined at implementation. Also known as the order
       bank / open orders. A stock (snapshot) measure of the open reservation
       bank, distinct from the Total Reservations flow KPI.
+
+# -----------------------------------------------------------------------------
+# Data-quality invariants — relationships that should always hold within a
+# single reporting period. These are checkable by the `kpi` asserts in
+# dq_framework. Only same-period subset relationships are listed; cross-stage
+# funnel drop-off (Leads > Visits > ...) is an expected *trend*, not a hard
+# invariant, because a lead in one period may convert in a later one.
+# -----------------------------------------------------------------------------
+dq_invariants:
+  - rule: "hot_leads <= leads"
+    rationale: Hot Leads is a qualified subset of Leads on the same lead-creation anchor.
+  - rule: "leads_without_walkins <= leads"
+    rationale: Walk-ins are additive, so excluding them cannot increase the count.
+  - rule: "hot_leads_without_walkins <= hot_leads"
+    rationale: Same walk-in exclusion, applied to Hot Leads.
+  - rule: "test_drives_completed <= test_drives_booked"
+    rationale: Completed is a lifecycle subset of Booked on the same stage.
+  - rule: "test_drives_oepn + test_drives_completed + test_drives_noshow + test_drives_cancelled <= test_drives_booked"
+    rationale: The lifecycle states partition (or sub-partition) the booked test drives.
+  - rule: "web_attributed_<measure> <= <measure>"
+    rationale: Web-attributed counterparts are a subset of each base measure.
+  - rule: "every measure >= 0"
+    rationale: All funnel measures are non-negative counts (Invoices is net of reversals but should not go negative in aggregate).
 
 # -----------------------------------------------------------------------------
 # Supporting business terms — the vocabulary the KPI definitions rely on.
