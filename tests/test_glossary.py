@@ -52,7 +52,21 @@ def test_every_kpi_is_fully_defined():
             assert kpi["technical"].get("measure_columns"), kpi["name"]
 
 
-@pytest.mark.parametrize("name", ["kpis.md", "terms.md"])
+def test_funnel_group_mapping_is_consistent():
+    data = yaml.safe_load(SOURCE.read_text(encoding="utf-8"))
+    fg = data["funnel_groups"]
+    defined = {g["name"] for g in fg["groups"]}
+    assert fg["mapping"], "funnel-group mapping is empty"
+    # Every mapped GROUP is either a defined group or null (unmapped).
+    for row in fg["mapping"]:
+        assert row.get("group") is None or row["group"] in defined, row
+    # Every key funnel KPI has a group-identification rule.
+    ruled = {r["kpi"] for r in fg["per_kpi"]}
+    for kpi in data["kpis"]:
+        assert kpi["name"] in ruled, f"no funnel-group rule for {kpi['name']!r}"
+
+
+@pytest.mark.parametrize("name", ["kpis.md", "terms.md", "funnel_groups.md"])
 def test_generated_markdown_is_in_sync(name):
     renderer = _load_renderer()
     data = yaml.safe_load(SOURCE.read_text(encoding="utf-8"))

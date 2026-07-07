@@ -9,6 +9,8 @@ _Lead-to-invoice automotive sales funnel. Report table: `prsls_ldmg_actv_dy`._
 
 > All definitions are **under approval** — pending steward validation, not yet signed off.
 
+> Every KPI below can be split by **funnel group** (Digital / Walk-in / Others) — see [`funnel_groups.md`](funnel_groups.md).
+
 ## Data dictionary
 
 | KPI | Status | Definition | Source | Pseudo code | Note |
@@ -35,4 +37,4 @@ _Lead-to-invoice automotive sales funnel. Report table: `prsls_ldmg_actv_dy`._
 
 ---
 
-See [`terms.md`](terms.md) for the supporting business vocabulary and [`../../docs/Funnel2.0.md`](../../docs/Funnel2.0.md) for full lineage.
+See [`funnel_groups.md`](funnel_groups.md) for the Digital / Walk-in / Others channel split, [`terms.md`](terms.md) for the supporting business vocabulary, and [`../../docs/Funnel2.0.md`](../../docs/Funnel2.0.md) for full lineage.

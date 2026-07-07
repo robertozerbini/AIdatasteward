@@ -17,6 +17,12 @@ The vehicle brand (SAP division) the report is filtered to. Visits, Test Drives,
 
 **Related:** _Visits_, _Total Reservations_, _Invoices_
 
+### Funnel group
+
+The channel a record originated through — Digital, Walk-in or Others — used to split every key funnel KPI by channel. Derived from the record's normalized SOURCE and TYPE via the lead/enquiry type mapping (`lead_type_mapping_new`); GROUP is the resulting funnel group.
+
+**Related:** _Leads_, _Hot Leads_, _Visits_, _Test Drives_, _Total Reservations_, _Invoices_
+
 ### Invoice reversal
 
 A cancellation of a previously issued invoice. In the Invoices KPI a sold invoice contributes +1 and a reversal contributes -1, so the total is net of reversals.

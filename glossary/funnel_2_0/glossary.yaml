@@ -306,3 +306,156 @@ terms:
       funnel — leads, opportunities (visits) and follow-up activities (test
       drives).
     related: [Leads, Hot Leads, Visits, Test Drives]
+
+  - term: Funnel group
+    definition: >-
+      The channel a record originated through — Digital, Walk-in or Others —
+      used to split every key funnel KPI by channel. Derived from the record's
+      normalized SOURCE and TYPE via the lead/enquiry type mapping
+      (`lead_type_mapping_new`); GROUP is the resulting funnel group.
+    related: [Leads, Hot Leads, Visits, Test Drives, Total Reservations, Invoices]
+
+# -----------------------------------------------------------------------------
+# Funnel groups — the channel classification applied to every key funnel KPI.
+# A record's GROUP (Digital / Walk-in / Others) is derived from its normalized
+# SOURCE and TYPE via lead_type_mapping_new. The `mapping` below is the
+# authoritative SOURCE/TYPE -> GROUP lookup.
+# -----------------------------------------------------------------------------
+funnel_groups:
+  description: >-
+    Funnel groups classify where demand originated so every key funnel KPI
+    (Leads → Invoices) can be reported by channel. The group is resolved from
+    the record's normalized SOURCE, rolled up to TYPE, then to GROUP, using the
+    lead / enquiry type mapping (`lead_type_mapping_new`).
+
+  # Parsing notes flagged for steward confirmation (see README). A few rows in
+  # the source list were ambiguous; the assumed split is marked `assumed: true`.
+  groups:
+    - name: Digital
+      definition: >-
+        Online / digitally-originated demand — website and app forms, ecommerce,
+        social media, live chat / WhatsApp, CRM enquiries and the Blue app.
+    - name: Walk-in
+      definition: >-
+        In-person showroom demand with no digital origin — physical walk-ins and
+        showroom pop-up (kiosk) leads / sales. Walk-ins typically carry no
+        LEAD_ID and are counted separately in Leads / Hot Leads.
+    - name: Others
+      definition: >-
+        Non-digital, non-walk-in channels — B2B / fleet, events, print, SMS,
+        telephone, lease returns (GFV / Hertz / Affinity), referrals, migrated
+        and re-solicitation records.
+    - name: Unclassified
+      definition: >-
+        Records whose GROUP / TYPE / SOURCE do not map to any known channel
+        (all null). Reported as Unclassified.
+
+  # How the funnel group is identified for each key funnel KPI.
+  per_kpi:
+    - kpi: Leads
+      rule: >-
+        Native — from the lead's normalized source → type → GROUP. Walk-ins are
+        leads originating at a pop-up / walk-in sales office (typically no
+        LEAD_ID); Digital / Others come from `lead_type_mapping_new`.
+    - kpi: Hot Leads
+      rule: >-
+        Same as Leads (Hot Leads is a qualified subset of Leads and inherits its
+        group).
+    - kpi: Visits
+      rule: >-
+        Native — from the opportunity / enquiry source → type → GROUP.
+    - kpi: Test Drives
+      rule: >-
+        Inherited from the parent enquiry's group (a test drive is a follow-up
+        activity on the enquiry).
+    - kpi: Total Reservations
+      rule: >-
+        Inherited from the linked enquiry via `enquiry_id`; Digital is captured
+        as the `web_attributed_*` measures through the lead back-join
+        (`sales_group IN ('001','040')`). Orders with no enquiry link are
+        Unclassified for group.
+    - kpi: Invoices
+      rule: >-
+        Inherited from the linked order → enquiry (`sales_order_number →
+        enquiry_id`); Digital via the `web_attributed_*` back-join, same as
+        Total Reservations.
+    - kpi: Total Open Reservations (Reservation Bank)
+      rule: >-
+        Not yet implemented — will follow the Total Reservations rule (inherited
+        from the linked enquiry) once the metric is built.
+
+  # Authoritative SOURCE/TYPE -> GROUP mapping (order preserved from source).
+  # null = unmapped / not applicable. `assumed` flags a parsing assumption.
+  mapping:
+    - {group: null, type: null, source: null}
+
+    - {group: Digital, type: Blue, source: Book A Service, assumed: true}
+    - {group: Digital, type: Blue, source: General Enquiry}
+    - {group: Digital, type: Blue, source: Loan Eligibility Form}
+    - {group: Digital, type: Blue, source: Mobile Service}
+    - {group: Digital, type: Blue, source: Sell Your Car Form}
+    - {group: Digital, type: Blue, source: Test Drive Form}
+    - {group: Digital, type: Crm, source: General Enquiry}
+    - {group: Digital, type: Live Chat, source: Cec}
+    - {group: Digital, type: Live Chat, source: Live Chat}
+    - {group: Digital, type: Live Chat, source: V24}
+    - {group: Digital, type: Live Chat, source: Whatsapp}
+    - {group: Digital, type: Live Chat, source: Whatsapp Chatbot}
+    - {group: Digital, type: Social, source: Bulk Lead}
+    - {group: Digital, type: Social, source: Facebook}
+    - {group: Digital, type: Social, source: Instagram}
+    - {group: Digital, type: Social, source: Linkedin}
+    - {group: Digital, type: Social, source: Snapchat}
+    - {group: Digital, type: Social, source: Tiktok}
+    - {group: Digital, type: Social, source: Youtube}
+    - {group: Digital, type: Web, source: Ai Sales Agent}
+    - {group: Digital, type: Web, source: Carswitch}
+    - {group: Digital, type: Web, source: Dubizzle}
+    - {group: Digital, type: Web, source: Ecomm}
+    - {group: Digital, type: Web, source: Email}
+    - {group: Digital, type: Web, source: Enquiry Form}
+    - {group: Digital, type: Web, source: Finance Form}
+    - {group: Digital, type: Web, source: Google Analytics}
+    - {group: Digital, type: Web, source: Inbound Call}
+    - {group: Digital, type: Web, source: Insider}
+    - {group: Digital, type: Web, source: Internal}
+    - {group: Digital, type: Web, source: Loan Eligibility Form}
+    - {group: Digital, type: Web, source: Offer Form}
+    - {group: Digital, type: Web, source: Outbound Call}
+    - {group: Digital, type: Web, source: Principle Website}
+    - {group: Digital, type: Web, source: Sell Your Car Form}
+    - {group: Digital, type: Web, source: Test Drive Form}
+    - {group: Digital, type: Web, source: Trade-in Form}
+    - {group: Digital, type: Web, source: Web Chatbot}
+    - {group: Digital, type: Web, source: Web Form}
+
+    - {group: Others, type: null, source: null}
+    - {group: Others, type: Aff Lease, source: null, assumed: true}
+    - {group: Others, type: B2b, source: Campaign}
+    - {group: Others, type: B2b, source: Field Visit}
+    - {group: Others, type: B2b, source: General Enquiry}
+    - {group: Others, type: B2b, source: Referral}
+    - {group: Others, type: B2b, source: Repeat Purchase}
+    - {group: Others, type: B2b, source: Walk-in}
+    - {group: Others, type: Events, source: Events}
+    - {group: Others, type: Events, source: Gov Program}
+    - {group: Others, type: Events, source: Trade Fair}
+    - {group: Others, type: Gfv Return, source: null}
+    - {group: Others, type: Hertz Lease Return, source: null}
+    - {group: Others, type: Others, source: Migrated}
+    - {group: Others, type: Others, source: Others}
+    - {group: Others, type: Others, source: Reference}
+    - {group: Others, type: Print, source: Newspaper}
+    - {group: Others, type: Showroom, source: Promotions}
+    - {group: Others, type: Showroom, source: Resolicitation}
+    - {group: Others, type: Sms, source: Sms}
+    - {group: Others, type: Telephone, source: null}
+    - {group: Others, type: Telephone, source: Telephone}
+    - {group: Others, type: Web, source: null}
+    - {group: Others, type: Web, source: Re-solicitation, assumed: true}
+
+    - {group: Walk-in, type: Pop-up Lead, source: Pop-up, assumed: true}
+    - {group: Walk-in, type: Pop-up Sales, source: Pop-up, assumed: true}
+    - {group: Walk-in, type: Walk-in, source: Ghq Id}
+    - {group: Walk-in, type: Walk-in, source: Walk-in}
+    - {group: Walk-in, type: Walk-in, source: Warrah}

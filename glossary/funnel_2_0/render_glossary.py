@@ -85,6 +85,10 @@ def render_kpis(data: dict) -> str:
         "> All definitions are **under approval** — pending steward validation, "
         "not yet signed off.\n"
     )
+    out.append(
+        "> Every KPI below can be split by **funnel group** (Digital / Walk-in / "
+        "Others) — see [`funnel_groups.md`](funnel_groups.md).\n"
+    )
 
     # Data dictionary — KPI | Status | Definition | Source | Pseudo code | Note.
     out.append("## Data dictionary\n")
@@ -118,8 +122,10 @@ def render_kpis(data: dict) -> str:
 
     out.append("---\n")
     out.append(
-        "See [`terms.md`](terms.md) for the supporting business vocabulary and "
-        "[`../../docs/Funnel2.0.md`](../../docs/Funnel2.0.md) for full lineage.\n"
+        "See [`funnel_groups.md`](funnel_groups.md) for the Digital / Walk-in / "
+        "Others channel split, [`terms.md`](terms.md) for the supporting business "
+        "vocabulary, and [`../../docs/Funnel2.0.md`](../../docs/Funnel2.0.md) for "
+        "full lineage.\n"
     )
     return "\n".join(out)
 
@@ -143,9 +149,54 @@ def render_terms(data: dict) -> str:
     return "\n".join(out)
 
 
+def render_funnel_groups(data: dict) -> str:
+    fg = data["funnel_groups"]
+    meta = data["meta"]
+
+    out: list[str] = [GENERATED_BANNER]
+    out.append(f"# {meta['funnel']} — Funnel Groups (Digital / Walk-in / Others)\n")
+    out.append(f"{_clean(fg['description'])}\n")
+
+    # Group definitions.
+    out.append("## Groups\n")
+    for g in fg["groups"]:
+        out.append(f"- **{_cell(g['name'])}** — {_clean(g['definition'])}")
+    out.append("")
+
+    # How the group is identified per KPI.
+    out.append("## How the group is identified, per KPI\n")
+    out.append("| KPI | How the funnel group is identified |")
+    out.append("|-----|------------------------------------|")
+    for row in fg["per_kpi"]:
+        out.append(f"| **{_cell(row['kpi'])}** | {_cell(row['rule'])} |")
+    out.append("")
+
+    # Full SOURCE/TYPE -> GROUP mapping.
+    out.append("## Classification mapping (SOURCE + TYPE → GROUP)\n")
+    out.append(
+        "The authoritative lookup, applied via `lead_type_mapping_new`. "
+        "Rows marked ⚠ are parsing assumptions pending confirmation.\n"
+    )
+    out.append("| GROUP | TYPE | SOURCE | |")
+    out.append("|-------|------|--------|--|")
+    for m in fg["mapping"]:
+        flag = "⚠" if m.get("assumed") else ""
+        out.append(
+            f"| {_cell(m.get('group'))} "
+            f"| {_cell(m.get('type'))} "
+            f"| {_cell(m.get('source'))} "
+            f"| {flag} |"
+        )
+    out.append("")
+    out.append("---\n")
+    out.append("See [`kpis.md`](kpis.md) for the KPI definitions this dimension splits.\n")
+    return "\n".join(out)
+
+
 TARGETS = {
     "kpis.md": render_kpis,
     "terms.md": render_terms,
+    "funnel_groups.md": render_funnel_groups,
 }
 
 
