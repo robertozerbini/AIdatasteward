@@ -82,3 +82,9 @@ A C4C follow-up activity with TYPE = 'Test Drive'. Its STATUS ('Completed', open
 A showroom visitor recorded without an originating LEAD_ID (a walk-in enquiry where LEAD_ID is blank or null). Walk-ins are counted separately and added to the Leads and Hot Leads totals so no in-person visitor is missed.
 
 **Related:** _Leads_, _Hot Leads_, _LEAD_ID_
+
+### Web attribution
+
+The rule that credits a funnel event to a web / social origin, surfaced in the `web_attributed_*` counterpart of every KPI. It counts two populations: (a) events whose lead source is directly web / social, plus (b) walk-in enquiries recovered by a back-join from `customer_enquiries_long` to `customer_leads_long` on the last 9 digits of the mobile number (`right(mobile, 9)`) and division, within a ±120-day window — so a showroom walk-in that originally arrived as a web / social lead is still credited to web rather than lost. Web attribution is scoped to retail / ecommerce only via the lead back-join filter `sales_group IN ('001','040')`, so fleet / corporate and unattributed reservations are deliberately excluded by design and carry no web attribution.
+
+**Related:** _Leads_, _Visits_, _Walk-in_

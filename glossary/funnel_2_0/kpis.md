@@ -5,7 +5,7 @@
 
 _Lead-to-invoice automotive sales funnel. Report table: `prsls_ldmg_actv_dy`._
 
-**Owner:** Sales Analytics / Data Stewardship · **Status:** approved · **Version:** 1.1.0 · **Last reviewed:** 2026-07-08
+**Owner:** Sales Analytics / Data Stewardship · **Status:** approved · **Version:** 1.2.0 · **Last reviewed:** 2026-07-08
 
 ## Funnel at a glance
 

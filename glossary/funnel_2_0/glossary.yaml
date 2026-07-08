@@ -18,7 +18,7 @@ meta:
   report_table: "prsls_ldmg_actv_dy"
   owner: "Sales Analytics / Data Stewardship"
   status: approved
-  version: "1.1.0"
+  version: "1.2.0"
   last_reviewed: "2026-07-08"
   source_of_record: "Key KPI Definitions — Sales Funnel 2.0 (steward workbook)"
   related_docs:
@@ -269,3 +269,18 @@ terms:
       funnel — leads, opportunities (visits) and follow-up activities (test
       drives).
     related: [Leads, Hot Leads, Visits, Test Drives]
+
+  - term: Web attribution
+    definition: >-
+      The rule that credits a funnel event to a web / social origin, surfaced in
+      the `web_attributed_*` counterpart of every KPI. It counts two populations:
+      (a) events whose lead source is directly web / social, plus (b) walk-in
+      enquiries recovered by a back-join from `customer_enquiries_long` to
+      `customer_leads_long` on the last 9 digits of the mobile number
+      (`right(mobile, 9)`) and division, within a ±120-day window — so a showroom
+      walk-in that originally arrived as a web / social lead is still credited to
+      web rather than lost. Web attribution is scoped to retail / ecommerce only
+      via the lead back-join filter `sales_group IN ('001','040')`, so fleet /
+      corporate and unattributed reservations are deliberately excluded by design
+      and carry no web attribution.
+    related: [Leads, Visits, Walk-in]
