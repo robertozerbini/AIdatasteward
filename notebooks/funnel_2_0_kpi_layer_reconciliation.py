@@ -136,6 +136,16 @@ def banner(title, how_to_read=None, actions=None):
     print()
 
 
+def show_sql(sql, label="SQL executed — copy to re-run / double-check"):
+    """Print the exact SQL a section runs, in a fenced block, so it can be copy-pasted
+    into a SQL editor to double-check the numbers. Schema / window / filter widgets are
+    already interpolated, so what prints is exactly what executed."""
+    print(f"-- {label} " + "-" * max(4, 74 - len(label)))
+    print(sql.strip())
+    print("-" * 96)
+    print()
+
+
 # Shared legend for the reconciliation columns (reused across sections 5-7).
 COLUMN_LEGEND = [
     "silver / gold / gold_serve = the KPI counted at each medallion layer.",
@@ -669,6 +679,7 @@ banner(
         "A non-zero diff means the funnel's total_order_items disagrees with the fact -> "
         "check the enquiry_id attribution in sections 9b / 9c."])
 try:
+    show_sql(reservation_sql)
     display(spark.sql(reservation_sql))
 except Exception as e:
     print("Total Reservation validation FAILED —", str(e).splitlines()[0])
@@ -725,6 +736,7 @@ banner(
         "Watch the retail/ecom + unattributed cell: retail orders SHOULD attribute, so a large "
         "figure there is real attribution loss -> drill into it in section 9c."])
 try:
+    show_sql(reservation_attr_sql)
     display(spark.sql(reservation_attr_sql))
 except Exception as e:
     print("Total Reservation attribution breakdown FAILED —", str(e).splitlines()[0])
@@ -805,14 +817,42 @@ banner(
         "opportunities that failed to reach gold. If non-trivial, escalate it.",
         "null enquiry_id / non-numeric token = source-side SAP gap or expected fleet/direct -> "
         "no pipeline fix, note it as known.",
-        "The 50-row sample below shows the raw orders for spot-checking individual documents."])
+        "The per-case detail below lists the raw orders (both root causes) for spot-checking."])
+
+# Detail is split into the two root causes and shows ALL rows (capped by the widget below), on the
+# SAME filter that feeds _dy (order_type IN ZOR/YOR/TA + the reporting window) via unattributed_base.
+dbutils.widgets.text("reservation_sample_rows", "0", "9c: max detail rows per case (0 = all)")
+_res_n = int(dbutils.widgets.get("reservation_sample_rows") or "0")
+_res_lim = f"LIMIT {_res_n}" if _res_n > 0 else ""
+
+# Root-cause predicates over unattributed_base (which already applies the _dy reservation filter).
+RESERVATION_CASES = [
+    ("Missing mapping in SAP (null enquiry_id)",
+     "AND NULLIF(so.enquiry_id, '') IS NULL"),
+    ("Opportunity-id leakage (enquiry_id present, not in gold)",
+     "AND NULLIF(so.enquiry_id, '') IS NOT NULL"),
+]
 try:
+    show_sql(unattributed_rootcause_sql)
     display(spark.sql(unattributed_rootcause_sql))
     print()
-    banner("9c (detail). Sample of unattributed reservation orders (raw rows, max 50)",
-           how_to_read=["Actual sales_ordr_vn_d rows behind the counts above, all attributes."],
-           actions=["Spot-check enquiry_id / sales_group / order_type to confirm the root cause."])
-    display(spark.sql(f"SELECT so.* {unattributed_base} LIMIT 50"))
+    for _case, _pred in RESERVATION_CASES:
+        detail_sql = f"SELECT so.* {unattributed_base} {_pred}\nORDER BY so.sales_item_creation_date {_res_lim}"
+        try:
+            _cnt = spark.sql(f"SELECT COUNT(*) c {unattributed_base} {_pred}").first()["c"]
+            banner(f"9c (detail). {_case}",
+                   how_to_read=[
+                       "Actual sales_ordr_vn_d rows for this root cause, all attributes, on the _dy "
+                       "reservation filter (order_type ZOR/YOR/TA + window).",
+                       f"{_cnt} order line row(s); showing {min(_cnt, _res_n) if _res_n else _cnt} "
+                       f"(reservation_sample_rows = {_res_n or 'all'})."],
+                   actions=["Spot-check enquiry_id / sales_group / order_type to confirm the root cause.",
+                            "Set reservation_sample_rows = 0 to export every row for this case."])
+            show_sql(detail_sql)
+            display(spark.sql(detail_sql))
+            print()
+        except Exception as e:
+            print(f"9c detail [{_case}] FAILED —", str(e).splitlines()[0])
 except Exception as e:
     print("Unattributed reservations FAILED —", str(e).splitlines()[0])
 
@@ -884,6 +924,7 @@ banner(
         "Source buckets are not fixable by enrichment — go to 10c for the exact keys to raise with "
         "the org-structure / SAP owners."])
 try:
+    show_sql(masterdata_overview_sql)
     display(spark.sql(masterdata_overview_sql))
 except Exception as e:
     print("Master-data overview FAILED —", str(e).splitlines()[0])
@@ -966,11 +1007,13 @@ banner(
         "The detail table below lists each group to drive those fixes.",
         "'Source:' rows here are not enrichment-fixable -> 10c lists their keys to report to source."])
 try:
+    show_sql(masterdata_rootcause_sql)
     display(spark.sql(masterdata_rootcause_sql))
     print()
     banner("10b (detail). Each UNKNOWN Sales Office group with its classification",
            how_to_read=["One row per (org, division, office) needing attention, most rows first."],
            actions=["Use the 'Fixable' rows to build the UPDATE / INSERT master-data statements."])
+    show_sql(masterdata_detail_sql)
     display(spark.sql(masterdata_detail_sql))
 except Exception as e:
     print("Master-data root-cause FAILED —", str(e).splitlines()[0])
@@ -1089,11 +1132,13 @@ banner(
         "SAP / source system: add the missing office (PAD_100_sales_office_texts) or the office code.",
         "These are NOT enrichment-fixable — do not send them through the 10b UPDATE / INSERT runbook."])
 try:
+    show_sql(masterdata_source_summary_sql)
     display(spark.sql(masterdata_source_summary_sql))
     print()
     banner("10c (detail). Each source-issue group with the key to report",
            how_to_read=["One row per (org, division, office) to raise upstream, most rows first."],
            actions=["Quote sales_organization_code · division_code · sales_office_code to the owner."])
+    show_sql(masterdata_source_detail_sql)
     display(spark.sql(masterdata_source_detail_sql))
 except Exception as e:
     print("Source-issues report FAILED —", str(e).splitlines()[0])
@@ -1231,8 +1276,10 @@ banner(
 
 source_id_frames = []
 for label, obj, id_expr, date_expr, org, div, office, extra_where in SOURCE_ID_OBJECTS:
+    obj_sql = _source_id_sql(label, obj, id_expr, date_expr, org, div, office, extra_where)
+    show_sql(obj_sql, label=f"10d {label} — SQL executed")
     try:
-        df = spark.sql(_source_id_sql(label, obj, id_expr, date_expr, org, div, office, extra_where))
+        df = spark.sql(obj_sql)
         n = df.count()
         print(f"[{label:<11}] {n} record id(s) recovered from {obj}")
         if n:
