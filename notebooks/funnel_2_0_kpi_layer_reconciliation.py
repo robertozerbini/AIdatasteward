@@ -1239,7 +1239,8 @@ if source_id_frames:
     source_ids = source_id_frames[0]
     for extra in source_id_frames[1:]:
         source_ids = source_ids.unionByName(extra)
-    source_ids = source_ids.cache()
+    # NB: no .cache() here — serverless compute rejects PERSIST TABLE. The summary and detail below
+    # each re-run the union, which is cheap relative to a cache that errors on serverless.
     print()
     banner("10d (summary). Distinct record ids by source_object x root_cause",
            how_to_read=["How many business ids each object contributes to each source root cause."])
