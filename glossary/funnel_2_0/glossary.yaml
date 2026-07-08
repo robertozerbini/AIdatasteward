@@ -212,38 +212,50 @@ kpis:
       Dashboard legacy and Funnel 2.0). Order types map to SAP codes ZOR / YOR /
       TA (Standard / Fleet / AFM Corporate). `item_quantity` is a line flag, so
       SUM counts reservation order line items. No `sales_group` filter — includes
-      retail, fleet and corporate. See the proposed unique-orders alternative
+      retail, fleet and corporate. See the proposed active-orders alternative
       below.
 
-  - name: Total Reservation (Proposed — unique orders)
+  - name: Total Reservation (Proposed — active orders)
     stage: 5
     source_system: "SAP"
     domain: ""
     status: proposed
     implemented: false
     definition: >-
-      Number of unique reservations (sales order numbers) created during the
-      selected analysis period.
+      Sum of reservation item quantities for active reservations created during
+      the selected analysis period — reservations that have not been rejected and
+      whose latest secondary status is 'Sales Order Created' (or blank). Applies
+      the same validity filters as Total Open Reservations, but as a flow over the
+      analysis period rather than an as-of snapshot.
     pseudo_code: >-
-      Count distinct ORDER NUMBER where ORDER CREATION DATE is within the
-      selected analysis period and ORDER TYPE IN ('Standard Order', 'Fleet
-      Order', 'AFM Corporate Order').
+      Sum ITEM QUANTITY for reservation items where ORDER CREATION DATE
+      (`sales_order_creation_date`) is within the selected analysis period,
+      ORDER TYPE IN ('Standard Order', 'Fleet Order', 'AFM Corporate Order'),
+      REASON FOR REJECTION (`rejection_reason_text`) is blank, and the latest
+      SECONDARY STATUS (`secondary_status_description_latest`) is 'Sales Order
+      Created' or blank.
     technical:
       silver_source: [PAD_100_sales_document_header, PAD_100_sales_document_item_data]
       gold_product: sales_ordr_vn_d
       measure_columns: []
     measurement:
-      grain: Distinct reservation order (sales order number).
-      time_anchor: Order creation date.
+      grain: >-
+        Reservation order line item. `item_quantity` is a =1 line flag, so the
+        SUM is a count of active line items — same grain as Total Reservations.
+      time_anchor: Order creation date (`sales_order_creation_date`).
       scope: >-
-        Order type ZOR / YOR / TA. Assumes a one-order-one-VIN process change
-        (see notes).
+        Order type ZOR / YOR / TA; not rejected (`rejection_reason_text` is
+        null); latest secondary status 'Sales Order Created' or null. Filtered to
+        the selected brand / sales org.
     notes: >-
       Proposed alternative to the current Total Reservations KPI, raised for
-      discussion. Counts one reservation per order (distinct order number)
-      instead of summing item quantities. Requires a process change so that one
-      order carries one VIN / order item — today multiple order items are allowed
-      per order, which is why the current KPI sums line items. Not implemented.
+      discussion. Keeps the same item-quantity sum but restricts it to
+      active / valid reservations by adding the Total Open Reservations validity
+      filters (no reason for rejection; latest secondary status 'Sales Order
+      Created' or blank) and anchoring on order creation date. Unlike Total Open
+      Reservations it is a period flow, not an as-of snapshot, and it does not
+      apply the '0020' / '0060' order-number exclusion or duplicate-VIN removal.
+      Not implemented.
 
   - name: Invoices
     stage: 6
@@ -527,10 +539,11 @@ funnel_groups:
         as the `web_attributed_*` measures through the lead back-join
         (`sales_group IN ('001','040')`). Orders with no enquiry link are
         Unclassified for group.
-    - kpi: Total Reservation (Proposed — unique orders)
+    - kpi: Total Reservation (Proposed — active orders)
       rule: >-
         Proposed — same enquiry-inherited grouping as Total Reservations, just
-        counted per distinct order rather than per line item.
+        restricted to active reservations (not rejected; latest secondary status
+        'Sales Order Created' or blank).
     - kpi: Invoices
       rule: >-
         Inherited from the linked order → enquiry (`sales_order_number →
