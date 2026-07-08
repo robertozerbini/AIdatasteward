@@ -1130,6 +1130,11 @@ except Exception as e:
 
 from pyspark.sql import functions as F
 
+# Cap the 10d detail hand-off list. Blank / 0 = show every recovered id (full list); a positive
+# number limits the displayed rows (the summary + per-object counts are always over the full set).
+dbutils.widgets.text("source_id_max_rows", "1000", "10d: max detail rows (0 = all)")
+SOURCE_ID_MAX_ROWS = int(dbutils.widgets.get("source_id_max_rows") or "0")
+
 # Reuse the 10b enrichment CTE (dq/enr) for the office-present classifications; src_missing keeps
 # reporting_date so the office-missing / division-0 rows can be matched to the Gold record's date.
 _source_id_cte = f"""{_md_enr_cte},
@@ -1249,12 +1254,21 @@ if source_id_frames:
                            F.count(F.lit(1)).alias("rows"))
                       .orderBy("root_cause", "source_object"))
     print()
+    total_ids = source_ids.count()
+    capped = SOURCE_ID_MAX_ROWS > 0 and total_ids > SOURCE_ID_MAX_ROWS
     banner("10d (detail). Business ids to report to source",
-           how_to_read=["One row per (source_object, id): the lead_id / enquiry_id / sales_document / "
-                        "sales_order_number behind each source-issue funnel row."],
-           actions=["Filter by root_cause / source_object and hand the ids to the owner from 10c."])
-    display(source_ids.orderBy("root_cause", "source_object",
-                               "sales_organization_code", "division_code", "record_date"))
+           how_to_read=[
+               "One row per (source_object, id): the lead_id / enquiry_id / sales_document / "
+               "billing_document behind each source-issue funnel row.",
+               f"Showing {min(total_ids, SOURCE_ID_MAX_ROWS) if capped else total_ids} of {total_ids} "
+               f"rows (source_id_max_rows = {SOURCE_ID_MAX_ROWS or 'all'})."],
+           actions=[
+               "Filter by root_cause / source_object and hand the ids to the owner from 10c.",
+               "Raise source_id_max_rows (0 = all) to export the full list."]
+           + (["Detail is capped — set source_id_max_rows = 0 to see every id."] if capped else []))
+    detail = source_ids.orderBy("root_cause", "source_object",
+                                "sales_organization_code", "division_code", "record_date")
+    display(detail.limit(SOURCE_ID_MAX_ROWS) if capped else detail)
 else:
     print("No source-issue record ids recovered (or every object failed — see the messages above).")
 
