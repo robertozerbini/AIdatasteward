@@ -50,6 +50,15 @@ _Lead-to-invoice automotive sales funnel. Report table: `prsls_ldmg_actv_dy`._
 | **Invoices** | `PAD_100_billing_details_new` | `sales_newu_usud_sals_vn_d_view` | `CUSTOMER_INVOICES` | `invoices` |
 | **Total Open Reservations (Reservation Bank)** | — | — | — | — |
 
+## Sub-measures & order flags
+
+Measure columns and business flags that break a headline KPI down further — each is a subset / attribute of its parent KPI.
+
+| Sub-measure | Column / flag | Parent KPI | Definition |
+|-------------|---------------|------------|------------|
+| **Order with deposit** | `orders_with_deposite` | Total Reservations | A reservation order for which a customer deposit / down-payment has been recorded — a subset of Total Reservations. Identified from the sales-document flow via the down-payment request billing type FAZ (`PAD_100_sales_document_flow` ⋈ `PAD_100_billing_document_header_data`), with the down-payment amount posted to special GL account `A` (`DWPYMNT`) in `PAD_100_accounting_document_segment`. |
+| **Order tagged** | `customer_tagged` | Total Reservations | A reservation order carrying the `customer_tagged` business flag — an order tagged to an identified end customer, as opposed to an unallocated stock order. Derived on the order fact (`sales_ordr_vn_d`) alongside `customer_linked` (the retail-linked reservation flag). **To verify:** the exact tagging rule lives in the `sales_ordr_vn_d` build, which is not in this repo, so the derivation must be confirmed against that pipeline. |
+
 ## Data-quality invariants
 
 Relationships that should hold within a single reporting period — checkable by the `kpi` asserts in `dq_framework`. Cross-stage funnel drop-off is an expected trend, not a hard invariant (stage lag).

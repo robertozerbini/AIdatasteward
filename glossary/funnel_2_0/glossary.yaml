@@ -179,6 +179,26 @@ kpis:
       gold_product: sales_ordr_vn_d
       serve_stream: CUSTOMER_ORDERS
       measure_columns: [total_order_items, orders, orders_with_deposite]
+    sub_measures:
+      - name: Order with deposit
+        column: orders_with_deposite
+        definition: >-
+          A reservation order for which a customer deposit / down-payment has
+          been recorded — a subset of Total Reservations. Identified from the
+          sales-document flow via the down-payment request billing type FAZ
+          (`PAD_100_sales_document_flow` ⋈ `PAD_100_billing_document_header_data`),
+          with the down-payment amount posted to special GL account `A`
+          (`DWPYMNT`) in `PAD_100_accounting_document_segment`.
+      - name: Order tagged
+        column: customer_tagged
+        definition: >-
+          A reservation order carrying the `customer_tagged` business flag — an
+          order tagged to an identified end customer, as opposed to an
+          unallocated stock order. Derived on the order fact (`sales_ordr_vn_d`)
+          alongside `customer_linked` (the retail-linked reservation flag). **To
+          verify:** the exact tagging rule lives in the `sales_ordr_vn_d` build,
+          which is not in this repo, so the derivation must be confirmed against
+          that pipeline.
     measurement:
       grain: >-
         Reservation order line item. `item_quantity` is a =1 line flag, so the
