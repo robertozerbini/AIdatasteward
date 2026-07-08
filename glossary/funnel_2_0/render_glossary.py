@@ -94,9 +94,43 @@ def render_kpis(data: dict) -> str:
 
     out.append("---\n")
     out.append(
-        "See [`terms.md`](terms.md) for the supporting business vocabulary and "
+        "See [`views.md`](views.md) for how the report segments these KPIs "
+        "(Total / Digital / Walk-in / Pop-up / Web Attribution), "
+        "[`terms.md`](terms.md) for the supporting business vocabulary and "
         "[`../../docs/Funnel2.0.md`](../../docs/Funnel2.0.md) for full lineage.\n"
     )
+    return "\n".join(out)
+
+
+def render_views(data: dict) -> str:
+    meta = data["meta"]
+    views = data.get("views", [])
+
+    out: list[str] = [GENERATED_BANNER]
+    out.append(f"# {meta['funnel']} — Report Views\n")
+    out.append(
+        "The report shows the **same six KPIs** in every view — the views differ "
+        "only in *which population* each counts. See [`kpis.md`](kpis.md) for the "
+        "KPI definitions themselves.\n"
+    )
+
+    out.append("| View | What it counts | Backing measures / flag |")
+    out.append("|------|----------------|-------------------------|")
+    for v in views:
+        out.append(
+            f"| **{v['name']}** | {_clean(v.get('summary', ''))} "
+            f"| {_clean(v.get('measures', ''))} |"
+        )
+    out.append("")
+
+    for v in views:
+        out.append(f"### {v['name']}\n")
+        out.append(f"{_clean(v['definition'])}\n")
+        if v.get("measures"):
+            out.append(f"**Backing measures / flag.** {_clean(v['measures'])}\n")
+
+    out.append("---\n")
+    out.append("See [`kpis.md`](kpis.md) for the KPI definitions.\n")
     return "\n".join(out)
 
 
@@ -121,6 +155,7 @@ def render_terms(data: dict) -> str:
 
 TARGETS = {
     "kpis.md": render_kpis,
+    "views.md": render_views,
     "terms.md": render_terms,
 }
 

@@ -18,7 +18,7 @@ meta:
   report_table: "prsls_ldmg_actv_dy"
   owner: "Sales Analytics / Data Stewardship"
   status: approved
-  version: "1.2.0"
+  version: "1.3.0"
   last_reviewed: "2026-07-08"
   source_of_record: "Key KPI Definitions — Sales Funnel 2.0 (steward workbook)"
   related_docs:
@@ -171,6 +171,58 @@ kpis:
     notes: >-
       Net of reversals. Deduped via `flag_cancellation = 0`. New / Used split by
       distribution channel (10 / 20). No `sales_group` filter.
+
+# -----------------------------------------------------------------------------
+# Report views — the same six KPIs, segmented by lead origin / channel. The
+# Funnel 2.0 report exposes these as selectable views (Total, Digital, Walk-in,
+# Pop-up, Web Attribution); every view shows the identical KPI set and differs
+# only in which population it counts.
+# -----------------------------------------------------------------------------
+views:
+  - name: Total
+    summary: "The whole funnel — every KPI, all origins combined."
+    definition: >-
+      The unsegmented funnel: each KPI (Leads, Hot Leads, Visits, Test Drives,
+      Total Reservations, Invoices) counted over all rows regardless of lead
+      origin or channel. The other views are subsets of Total — Digital, Walk-in
+      and Pop-up partition the front-of-funnel by origin, while Web Attribution
+      is a cross-cutting credited-to-web slice.
+    measures: >-
+      Base KPI columns (`leads`, `hot_leads`, `opportunities`, `test_drives_*`,
+      `total_order_items`, `invoices`).
+  - name: Digital
+    summary: "Digitally-originated leads and their downstream funnel."
+    definition: >-
+      The slice whose lead originated through a digital channel (online / web /
+      social / digital campaign), classified from the lead source via
+      `lead_type_mapping_new`. It is the online-acquisition funnel, as opposed to
+      physical walk-in / pop-up traffic.
+    measures: "Base KPI columns filtered to a digital-origin lead source."
+  - name: Walk-in
+    summary: "Showroom visitors with no originating lead."
+    definition: >-
+      The walk-in slice: showroom visitors recorded without an originating
+      LEAD_ID (a walk-in enquiry). It is the complement of the `*_without_walkins`
+      measures — total `leads` = `leads_without_walkins` + walk-ins — and is
+      flagged via `c4c_sales_offices_lkp` / the enquiry carrying no `lead_id`.
+    measures: "Walk-in portion (`leads` − `leads_without_walkins`); walk-in flag."
+  - name: Pop-up
+    summary: "Activity at temporary pop-up outlets."
+    definition: >-
+      The pop-up slice: leads / visits captured at a temporary pop-up sales
+      outlet rather than a permanent showroom, identified by the pop-up
+      sales-office flag (`c4c_sales_offices_lkp`) / the `POPUP_ORG` side of the
+      org-structure master (`eudu_mdata_dtac_orgstrc`).
+    measures: "Base KPI columns filtered to pop-up sales offices."
+  - name: Web Attribution
+    summary: "Events credited to a web / social origin."
+    definition: >-
+      The `web_attributed_*` slice: events credited to a web / social origin,
+      including walk-ins recovered by the mobile-number back-join
+      (`right(mobile, 9)` + division, ±120-day window) and scoped to retail /
+      ecommerce (`sales_group IN ('001','040')`). See the "Web attribution" term
+      for the full rule.
+    measures: "`web_attributed_*` KPI columns."
 
 # -----------------------------------------------------------------------------
 # Supporting business terms — the vocabulary the KPI definitions rely on.

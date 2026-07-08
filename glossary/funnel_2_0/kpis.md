@@ -5,7 +5,7 @@
 
 _Lead-to-invoice automotive sales funnel. Report table: `prsls_ldmg_actv_dy`._
 
-**Owner:** Sales Analytics / Data Stewardship · **Status:** approved · **Version:** 1.2.0 · **Last reviewed:** 2026-07-08
+**Owner:** Sales Analytics / Data Stewardship · **Status:** approved · **Version:** 1.3.0 · **Last reviewed:** 2026-07-08
 
 ## Funnel at a glance
 
@@ -136,4 +136,4 @@ _Lead-to-invoice automotive sales funnel. Report table: `prsls_ldmg_actv_dy`._
 
 ---
 
-See [`terms.md`](terms.md) for the supporting business vocabulary and [`../../docs/Funnel2.0.md`](../../docs/Funnel2.0.md) for full lineage.
+See [`views.md`](views.md) for how the report segments these KPIs (Total / Digital / Walk-in / Pop-up / Web Attribution), [`terms.md`](terms.md) for the supporting business vocabulary and [`../../docs/Funnel2.0.md`](../../docs/Funnel2.0.md) for full lineage.

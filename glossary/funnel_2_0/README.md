@@ -13,8 +13,9 @@ a single agreed definition.
 |------|-----------|
 | **[`glossary.yaml`](glossary.yaml)** | **Single source of truth.** Machine-readable KPI + term definitions. Edit this. |
 | [`kpis.md`](kpis.md) | Generated. The six funnel KPIs — definition, pseudo-code, lineage. |
+| [`views.md`](views.md) | Generated. The report views (Total / Digital / Walk-in / Pop-up / Web Attribution) — same KPIs, segmented by origin. |
 | [`terms.md`](terms.md) | Generated. Supporting business vocabulary (LEAD_ID, walk-in, order type…). |
-| [`render_glossary.py`](render_glossary.py) | Regenerates `kpis.md` and `terms.md` from `glossary.yaml`. |
+| [`render_glossary.py`](render_glossary.py) | Regenerates `kpis.md`, `views.md` and `terms.md` from `glossary.yaml`. |
 
 ## The KPIs
 
