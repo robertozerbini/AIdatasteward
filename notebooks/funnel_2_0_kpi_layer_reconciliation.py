@@ -27,9 +27,10 @@
 # MAGIC
 # MAGIC **Expected divergence:** Silver → Gold naturally shrinks (dedup to latest row per key,
 # MAGIC `sales_organisation <> '5000'`, date filters). Org **5000 is the Automall buyer channel** and
-# MAGIC is intentionally excluded from the Leads / Hot Leads / Visits / Test Drives Gold products — a
-# MAGIC deliberate scope decision, not data loss, so its Silver rows legitimately show as `source_only`
-# MAGIC in the drill-down. Gold → Gold-Serve should reconcile closely; a gap there — for a given
+# MAGIC is intentionally excluded **in gold**, only on the two front-of-funnel products —
+# MAGIC `customer_leads_long` (Leads) and `customer_enquiries_long` (Visits) — a deliberate scope
+# MAGIC decision, not data loss, so its Silver rows legitimately show as `source_only` in the
+# MAGIC drill-down. Gold → Gold-Serve should reconcile closely; a gap there — for a given
 # MAGIC org/division — is the signal worth investigating.
 
 # COMMAND ----------
@@ -211,9 +212,10 @@ REGISTRY = [
         "SALES_ORGANIZATION", "DIVISION",
         "COUNT(DISTINCT LPAD(COALESCE(C4CLEADID, REPLACE(LEAD_ID,'C4C-','')), 10, '0'))",
         ""),
-    # Gold excludes org 5000 (the Automall buyer channel) by design on Leads / Hot Leads / Visits /
-    # Test Drives — an intentional scope decision, not data loss. Silver keeps 5000, so its rows
-    # appear as source_only in the Silver<->Gold drill-down and are expected (no fix needed).
+    # Gold excludes org 5000 (the Automall buyer channel) by design on the two front-of-funnel
+    # products — customer_leads_long (Leads) and customer_enquiries_long (Visits) — an intentional
+    # scope decision, not data loss. Silver keeps 5000, so its rows appear as source_only in the
+    # Silver<->Gold drill-down and are expected (no fix needed).
     ("Leads", "gold", f"{GOLD}.customer_leads_long",
         "DATE(LEAD_CREATION_DATE)",
         "SALES_ORGANISATION_CODE", "DIVISION",

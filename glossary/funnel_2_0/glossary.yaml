@@ -49,7 +49,7 @@ kpis:
       serve_stream: CUSTOMER_LEADS
       measure_columns: [leads, leads_without_walkins]
     notes: >-
-      Org 5000 (the Automall buyer channel) is intentionally excluded throughout
+      Org 5000 (the Automall buyer channel) is intentionally excluded in gold
       — a deliberate scope decision, not data loss (see the "Org 5000 (Automall
       buyer)" term). `leads_without_walkins` excludes pop-up / walk-in leads.
 
@@ -95,7 +95,7 @@ kpis:
     notes: >-
       A showroom visit is modelled as a C4C opportunity. `open_opportunities_14d`
       = opportunity still Open with a test-drive gap > 15 days. Org 5000 (Automall
-      buyer) is intentionally excluded, as for Leads.
+      buyer) is intentionally excluded in gold, as for Leads.
 
   - name: Test Drives
     stage: 4
@@ -212,13 +212,15 @@ terms:
   - term: Org 5000 (Automall buyer)
     definition: >-
       Sales organization 5000 is the Automall buyer channel (automall / wholesale
-      buyer traffic), not a retail showroom. It is intentionally filtered out of
-      the funnel's front-of-funnel gold products via `sales_organisation_code <>
-      '5000'`, so Leads, Hot Leads, Visits and Test Drives exclude it by design —
-      a deliberate scope decision, not data loss. Silver retains org 5000, so its
-      leads / visits legitimately appear as `source_only` when Silver is compared
-      to Gold in the reconciliation drill-down; they are expected and need no fix.
-    related: [Leads, Hot Leads, Visits, Test Drives]
+      buyer traffic), not a retail showroom. The exclusion is applied only in
+      **gold**, and only on the two front-of-funnel C4C products —
+      `customer_leads_long` (Leads) and `customer_enquiries_long` (Visits) — via
+      `sales_organisation_code <> '5000'`, so leads and visits drop it by design
+      (a deliberate scope decision, not data loss). Silver retains org 5000, so
+      its leads / visits legitimately appear as `source_only` when Silver is
+      compared to Gold in the reconciliation drill-down; they are expected and
+      need no fix.
+    related: [Leads, Visits]
 
   - term: Qualification (Hot)
     definition: >-
