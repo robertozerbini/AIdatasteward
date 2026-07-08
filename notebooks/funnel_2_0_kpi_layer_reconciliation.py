@@ -1115,7 +1115,7 @@ except Exception as e:
 # MAGIC | `OPPORTUNITY` | `customer_enquiries_long` | `enquiry_id` (opportunity id) |
 # MAGIC | `TESTDRIVE` | `customer_enquiries_long` | `enquiry_id` |
 # MAGIC | `ORDER` | `sales_ordr_vn_d` | `sales_document` |
-# MAGIC | `INVOICE` | `sales_newu_usud_sals_vn_d_view` | `sales_order_number` |
+# MAGIC | `INVOICE` | `sales_newu_usud_sals_vn_d_view` | `billing_document` |
 # MAGIC
 # MAGIC Two join strategies, matching the STEP-3 query:
 # MAGIC - **office code present** (`malformed org structure`, `office not in SAP texts`) → join on
@@ -1159,22 +1159,24 @@ src_missing AS (
 )"""
 
 # Per source object: (label, Gold object, id_expr, date_expr, org_col, div_col, office_col, extra_where).
-# Date / org / division mirror the section-3 REGISTRY; office_col + id_expr follow the STEP-3 source
-# query. customer_enquiries_long's office is sales_office_code (the funnel enrichment key); the
-# STEP-3 query used branch_id for the malformed join — swap it here if that is the resolving column.
+# Columns follow the STEP-3 source query verbatim (its proven prod columns), so 10d reconciles with
+# that reference: OPPORTUNITY dates on appointment_visit_time, INVOICE reports billing_document, and
+# the TESTDRIVE COALESCE order matches STEP-3. customer_enquiries_long's office is sales_office_code
+# (the funnel enrichment key); STEP-3 used branch_id for its malformed-opportunity join — swap it
+# here if branch_id (not sales_office_code) is the column that failed to resolve in your schema.
 SOURCE_ID_OBJECTS = [
     ("LEAD", f"{GOLD}.customer_leads_long", "LEAD_ID",
      "DATE(LEAD_CREATION_DATE)", "SALES_ORGANISATION_CODE", "DIVISION", "SALES_OFFICE", ""),
     ("OPPORTUNITY", f"{GOLD}.customer_enquiries_long", "ENQUIRY_ID",
-     "DATE(ENQUIRY_CREATED_TIME)", "SALES_ORGANISATION_CODE", "DIVISION_CODE", "SALES_OFFICE_CODE", ""),
+     "DATE(appointment_visit_time)", "SALES_ORGANISATION_CODE", "DIVISION_CODE", "SALES_OFFICE_CODE", ""),
     ("TESTDRIVE", f"{GOLD}.customer_enquiries_long", "ENQUIRY_ID",
-     "DATE(COALESCE(TESTDRIVE_OPEN_TIME, TESTDRIVE_TIME, TESTDRIVE_CANCELLED_TIME))",
+     "DATE(COALESCE(TESTDRIVE_TIME, TESTDRIVE_CANCELLED_TIME, TESTDRIVE_OPEN_TIME))",
      "SALES_ORGANISATION_CODE", "DIVISION_CODE", "SALES_OFFICE_CODE",
-     "AND COALESCE(TESTDRIVE_OPEN_TIME, TESTDRIVE_TIME, TESTDRIVE_CANCELLED_TIME) IS NOT NULL"),
+     "AND COALESCE(TESTDRIVE_TIME, TESTDRIVE_CANCELLED_TIME, TESTDRIVE_OPEN_TIME) IS NOT NULL"),
     ("ORDER", f"{FACT}.sales_ordr_vn_d", "sales_document",
      "DATE(sales_item_creation_date)", "sales_organization", "division", "sales_office",
      "AND UPPER(order_type) IN ('ZOR','YOR','TA')"),
-    ("INVOICE", f"{FACT}.sales_newu_usud_sals_vn_d_view", "sales_order_number",
+    ("INVOICE", f"{FACT}.sales_newu_usud_sals_vn_d_view", "billing_document",
      "DATE(day)", "sales_organization_code", "division_key", "sales_office", ""),
 ]
 
