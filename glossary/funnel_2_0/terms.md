@@ -17,6 +17,12 @@ The vehicle brand (SAP division) the report is filtered to. Visits, Test Drives,
 
 **Related:** _Visits_, _Total Reservations_, _Invoices_
 
+### Funnel group
+
+The channel a record originated through — Digital, Walk-in or Others — used to split every key funnel KPI by channel. Derived from the record's normalized SOURCE and TYPE via the lead/enquiry type mapping (`lead_type_mapping_new`); GROUP is the resulting funnel group.
+
+**Related:** _Leads_, _Hot Leads_, _Visits_, _Test Drives_, _Total Reservations_, _Invoices_
+
 ### Invoice reversal
 
 A cancellation of a previously issued invoice. In the Invoices KPI a sold invoice contributes +1 and a reversal contributes -1, so the total is net of reversals.
@@ -29,11 +35,23 @@ The unique identifier of a lead in SAP C4C. Distinct LEAD_IDs are the counting u
 
 **Related:** _Leads_, _Hot Leads_, _Walk-in_
 
+### Open reservation
+
+A reservation still live at the snapshot date — its sales order number does not start with '0020' or '0060', it has no reason for rejection, and its secondary status is 'Sales Order Created' or blank.
+
+**Related:** _Total Open Reservations (Reservation Bank)_, _Order Bank (Reservation Bank)_
+
 ### OPPORTUNITY_ID
 
 The unique identifier of a C4C opportunity. One opportunity represents one showroom visit; distinct OPPORTUNITY_IDs are the counting unit for Visits.
 
 **Related:** _Visits_, _Test Drives_
+
+### Order Bank (Reservation Bank)
+
+The stock of open reservations outstanding as of a snapshot date — orders taken but not yet invoiced or cancelled. Measured by Total Open Reservations. A point-in-time balance, unlike the flow KPIs that count events within a period.
+
+**Related:** _Total Open Reservations (Reservation Bank)_, _Total Reservations_, _Open reservation_
 
 ### Order type
 
@@ -64,6 +82,12 @@ A single sales-document line item of a reservation order. Total Reservations sum
 SAP Cloud for Customer, the CRM system of record for the front of the funnel — leads, opportunities (visits) and follow-up activities (test drives).
 
 **Related:** _Leads_, _Hot Leads_, _Visits_, _Test Drives_
+
+### Snapshot date
+
+The as-of date a stock (bank) metric is evaluated on. Total Open Reservations is a balance as of the selected snapshot date, rather than a sum over an analysis period.
+
+**Related:** _Total Open Reservations (Reservation Bank)_, _Analysis period_
 
 ### Test-drive activity
 

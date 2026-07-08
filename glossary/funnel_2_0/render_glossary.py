@@ -47,6 +47,29 @@ def _code_join(values) -> str:
     return ", ".join(f"`{v}`" for v in items) if items else "—"
 
 
+def _cell(text: str) -> str:
+    """Make a string safe for a markdown table cell (escape pipes, one line)."""
+    return _clean(text).replace("|", "\\|") or "—"
+
+
+_STATUS_LABELS = {
+    "approved": "Approved",
+    "under_approval": "Under approval",
+    "proposed": "Proposed — for discussion",
+    "draft": "Draft",
+    "deprecated": "Deprecated",
+}
+
+
+def _status_label(kpi: dict) -> str:
+    """Human-readable approval + implementation state for a KPI."""
+    status = kpi.get("status", "under_approval")
+    label = _STATUS_LABELS.get(status, status.replace("_", " ").capitalize())
+    if kpi.get("implemented", True) is False:
+        label += " · not yet implemented"
+    return label
+
+
 def render_kpis(data: dict) -> str:
     meta = data["meta"]
     kpis = sorted(data["kpis"], key=lambda k: k.get("stage", 0))
@@ -54,48 +77,87 @@ def render_kpis(data: dict) -> str:
     out: list[str] = [GENERATED_BANNER]
     out.append(f"# {meta['funnel']} — KPI Business Glossary\n")
     out.append(f"_{meta['subtitle']}. Report table: `{meta['report_table']}`._\n")
+    meta_status = _STATUS_LABELS.get(meta["status"], meta["status"])
     out.append(
-        f"**Owner:** {meta['owner']} · **Status:** {meta['status']} · "
+        f"**Owner:** {meta['owner']} · **Status:** {meta_status} · "
         f"**Version:** {meta['version']} · **Last reviewed:** {meta['last_reviewed']}\n"
     )
+    out.append(
+        "> All definitions are **under approval** — pending steward validation, "
+        "not yet signed off.\n"
+    )
+    out.append(
+        "> Every KPI below can be split by **funnel group** (Digital / Walk-in / "
+        "Others) — see [`funnel_groups.md`](funnel_groups.md).\n"
+    )
 
-    # Summary table.
-    out.append("## Funnel at a glance\n")
-    out.append("| # | KPI | Source | Serving stream | Measure column(s) |")
-    out.append("|---|-----|--------|----------------|-------------------|")
+    # Data dictionary — KPI | Status | Definition | Source | Pseudo code | Note.
+    out.append("## Data dictionary\n")
+    out.append("| KPI | Status | Definition | Source | Pseudo code | Note |")
+    out.append("|-----|--------|------------|--------|-------------|------|")
     for k in kpis:
-        measures = ", ".join(f"`{m}`" for m in _as_list(k["technical"].get("measure_columns")))
         out.append(
-            f"| {k.get('stage', '')} | **{k['name']}** | {k['source_system']} "
-            f"| `{k['technical'].get('serve_stream', '')}` | {measures} |"
+            f"| **{_cell(k['name'])}** "
+            f"| {_cell(_status_label(k))} "
+            f"| {_cell(k['definition'])} "
+            f"| {_cell(k['source_system'])} "
+            f"| {_cell(k['pseudo_code'])} "
+            f"| {_cell(k.get('notes', ''))} |"
         )
     out.append("")
 
-    # Detail cards.
-    out.append("## Definitions\n")
+    # Measurement details — grain / time anchor / scope (precision that the
+    # verbatim workbook definitions leave implicit).
+    if any(k.get("measurement") for k in kpis):
+        out.append("## Measurement details\n")
+        out.append("| KPI | Grain (counting unit) | Time anchor | Scope |")
+        out.append("|-----|-----------------------|-------------|-------|")
+        for k in kpis:
+            m = k.get("measurement", {})
+            out.append(
+                f"| **{_cell(k['name'])}** "
+                f"| {_cell(m.get('grain'))} "
+                f"| {_cell(m.get('time_anchor'))} "
+                f"| {_cell(m.get('scope'))} |"
+            )
+        out.append("")
+
+    # Lineage reference (kept separately so the dictionary stays readable).
+    out.append("## Lineage reference\n")
+    out.append("| KPI | Silver source | Gold product | Serving stream | Measure column(s) |")
+    out.append("|-----|---------------|--------------|----------------|-------------------|")
     for k in kpis:
         tech = k["technical"]
-        out.append(f"### {k.get('stage', '')}. {k['name']}\n")
-        domain = k.get("domain") or "—"
         out.append(
-            f"- **Source system:** {k['source_system']}  \n"
-            f"- **KPI domain:** {domain}  \n"
-            f"- **Status:** {k.get('status', 'approved')}\n"
+            f"| **{_cell(k['name'])}** "
+            f"| {_code_join(tech.get('silver_source'))} "
+            f"| {_code_join(tech.get('gold_product'))} "
+            f"| {_code_join(tech.get('serve_stream'))} "
+            f"| {_code_join(tech.get('measure_columns'))} |"
         )
-        out.append(f"**Definition.** {_clean(k['definition'])}\n")
-        out.append(f"**Calculation (pseudo-code).** {_clean(k['pseudo_code'])}\n")
-        out.append("**Lineage.**\n")
-        out.append(f"- Silver source: {_code_join(tech.get('silver_source'))}")
-        out.append(f"- Gold product: {_code_join(tech.get('gold_product'))}")
-        out.append(f"- Serving stream: {_code_join(tech.get('serve_stream'))}")
-        out.append(f"- Measure column(s): {_code_join(tech.get('measure_columns'))}\n")
-        if k.get("notes"):
-            out.append(f"> **Notes.** {_clean(k['notes'])}\n")
+    out.append("")
+
+    # Data-quality invariants — testable contracts for the dq_framework asserts.
+    invariants = data.get("dq_invariants") or []
+    if invariants:
+        out.append("## Data-quality invariants\n")
+        out.append(
+            "Relationships that should hold within a single reporting period — "
+            "checkable by the `kpi` asserts in `dq_framework`. Cross-stage funnel "
+            "drop-off is an expected trend, not a hard invariant (stage lag).\n"
+        )
+        out.append("| Invariant | Why |")
+        out.append("|-----------|-----|")
+        for inv in invariants:
+            out.append(f"| `{_cell(inv['rule'])}` | {_cell(inv.get('rationale'))} |")
+        out.append("")
 
     out.append("---\n")
     out.append(
-        "See [`terms.md`](terms.md) for the supporting business vocabulary and "
-        "[`../../docs/Funnel2.0.md`](../../docs/Funnel2.0.md) for full lineage.\n"
+        "See [`funnel_groups.md`](funnel_groups.md) for the Digital / Walk-in / "
+        "Others channel split, [`terms.md`](terms.md) for the supporting business "
+        "vocabulary, and [`../../docs/Funnel2.0.md`](../../docs/Funnel2.0.md) for "
+        "full lineage.\n"
     )
     return "\n".join(out)
 
@@ -119,9 +181,52 @@ def render_terms(data: dict) -> str:
     return "\n".join(out)
 
 
+def render_funnel_groups(data: dict) -> str:
+    fg = data["funnel_groups"]
+    meta = data["meta"]
+
+    out: list[str] = [GENERATED_BANNER]
+    out.append(f"# {meta['funnel']} — Funnel Groups (Digital / Walk-in / Others)\n")
+    out.append(f"{_clean(fg['description'])}\n")
+
+    # Group definitions.
+    out.append("## Groups\n")
+    for g in fg["groups"]:
+        out.append(f"- **{_cell(g['name'])}** — {_clean(g['definition'])}")
+    out.append("")
+
+    # How the group is identified per KPI.
+    out.append("## How the group is identified, per KPI\n")
+    out.append("| KPI | How the funnel group is identified |")
+    out.append("|-----|------------------------------------|")
+    for row in fg["per_kpi"]:
+        out.append(f"| **{_cell(row['kpi'])}** | {_cell(row['rule'])} |")
+    out.append("")
+
+    # Full lead_source + lead_type -> lead_group mapping.
+    out.append("## Classification mapping (lead_source + lead_type → lead_group)\n")
+    out.append(
+        f"The authoritative lookup ({len(fg['mapping'])} rows), applied via "
+        "`lead_type_mapping_new`. `null` = no source value.\n"
+    )
+    out.append("| lead_group | lead_type | lead_source |")
+    out.append("|------------|-----------|-------------|")
+    for m in fg["mapping"]:
+        out.append(
+            f"| {_cell(m.get('group'))} "
+            f"| {_cell(m.get('type'))} "
+            f"| {_cell(m.get('source')) if m.get('source') is not None else '`null`'} |"
+        )
+    out.append("")
+    out.append("---\n")
+    out.append("See [`kpis.md`](kpis.md) for the KPI definitions this dimension splits.\n")
+    return "\n".join(out)
+
+
 TARGETS = {
     "kpis.md": render_kpis,
     "terms.md": render_terms,
+    "funnel_groups.md": render_funnel_groups,
 }
 
 

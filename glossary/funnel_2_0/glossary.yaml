@@ -17,8 +17,8 @@ meta:
   subtitle: "Lead-to-invoice automotive sales funnel"
   report_table: "prsls_ldmg_actv_dy"
   owner: "Sales Analytics / Data Stewardship"
-  status: approved
-  version: "1.0.0"
+  status: under_approval  # all definitions pending steward validation
+  version: "1.1.0"
   last_reviewed: "2026-07-07"
   source_of_record: "Key KPI Definitions — Sales Funnel 2.0 (steward workbook)"
   related_docs:
@@ -33,7 +33,8 @@ kpis:
     stage: 1
     source_system: "SAP (C4C)"
     domain: ""
-    status: approved
+    status: under_approval
+    implemented: true
     definition: >-
       Total number of leads captured across all channels during the selected
       analysis period. This KPI is calculated as the count of distinct
@@ -48,15 +49,24 @@ kpis:
       gold_product: customer_leads_long
       serve_stream: CUSTOMER_LEADS
       measure_columns: [leads, leads_without_walkins]
+    measurement:
+      grain: >-
+        Distinct lead (LEAD_ID), plus walk-in enquiries with no LEAD_ID added on
+        top.
+      time_anchor: Lead creation date.
+      scope: Sales org 5000 excluded. All channels and brands.
     notes: >-
       Org 5000 is excluded throughout. `leads_without_walkins` excludes
-      pop-up / walk-in leads.
+      pop-up / walk-in leads. The added walk-ins are exactly those with a
+      blank / null LEAD_ID, so they cannot overlap the distinct-LEAD_ID count
+      (no double counting).
 
   - name: Hot Leads
     stage: 2
     source_system: "SAP (C4C)"
     domain: ""
-    status: approved
+    status: under_approval
+    implemented: true
     definition: >-
       Total number of qualified leads with strong purchase intent during the
       selected analysis period. A lead is considered qualified when its
@@ -72,15 +82,25 @@ kpis:
       gold_product: customer_leads_long
       serve_stream: CUSTOMER_LEADS
       measure_columns: [hot_leads, hot_leads_without_walkins]
+    measurement:
+      grain: >-
+        Distinct lead (LEAD_ID) meeting the Hot rule, plus walk-in enquiries
+        with no LEAD_ID added on top.
+      time_anchor: Lead creation date.
+      scope: Sales org 5000 excluded.
     notes: >-
       A subset of Leads. Qualification is `lead_qualification = 'Hot'` OR
-      `pass_to_branch_time IS NOT NULL`.
+      `pass_to_branch_time IS NOT NULL`. Current behaviour: **every walk-in
+      enquiry is counted as a Hot Lead** (walk-ins are added to the total in
+      full, not only qualified ones) — confirmed as intended, flagged here as a
+      known simplification.
 
   - name: Visits
     stage: 3
     source_system: "SAP (C4C)"
     domain: ""
-    status: approved
+    status: under_approval
+    implemented: true
     definition: >-
       Total number of showroom visits recorded during the selected analysis
       period for the chosen brand.
@@ -91,15 +111,25 @@ kpis:
       gold_product: customer_enquiries_long
       serve_stream: CUSTOMER_ENQUIRIES
       measure_columns: [opportunities, open_opportunities_14d]
+    measurement:
+      grain: >-
+        Distinct opportunity (OPPORTUNITY_ID). "Visit" = opportunity, not a
+        verified physical showroom visit.
+      time_anchor: Opportunity creation date.
+      scope: Sales org 5000 excluded. Selected brand / division.
     notes: >-
       A showroom visit is modelled as a C4C opportunity. `open_opportunities_14d`
-      = opportunity still Open with a test-drive gap > 15 days.
+      = opportunity still Open with a test-drive gap threshold. **To verify:** the
+      column name says `14d` but `docs/Funnel2.0.md` describes the threshold as
+      "> 15 days" — the build (`customer_enquiries_long`) is not in this repo, so
+      the actual value (14 vs 15 days) must be confirmed against that pipeline.
 
   - name: Test Drives
     stage: 4
     source_system: "SAP (C4C)"
     domain: ""
-    status: approved
+    status: under_approval
+    implemented: true
     definition: >-
       Total number of test drives completed during the selected analysis period
       for the chosen brand.
@@ -116,18 +146,27 @@ kpis:
       measure_columns:
         - test_drives_booked
         - test_drives_completed
-        - test_drives_open
+        - test_drives_oepn
         - test_drives_noshow
         - test_drives_cancelled
+    measurement:
+      grain: >-
+        Completed test-drive activity on an opportunity (TYPE = 'Test Drive',
+        STATUS = 'Completed').
+      time_anchor: Test-drive completion timestamp (latest LAST_UPDATE_DATE).
+      scope: Selected brand / division.
     notes: >-
       The headline KPI is completed test drives. Booked / Open / No-show /
-      Cancelled are additional lifecycle measures on the same stage.
+      Cancelled are additional lifecycle measures on the same stage. The "open"
+      measure column is spelled `test_drives_oepn` (a typo in the physical
+      schema — kept as-is so the glossary matches the real column).
 
   - name: Total Reservations
     stage: 5
     source_system: "SAP"
     domain: ""
-    status: approved
+    status: under_approval
+    implemented: true
     definition: >-
       Total number of reservation items (sum of item quantity) created during
       the selected analysis period for the chosen brand.
@@ -140,18 +179,58 @@ kpis:
       gold_product: sales_ordr_vn_d
       serve_stream: CUSTOMER_ORDERS
       measure_columns: [total_order_items, orders, orders_with_deposite]
+    measurement:
+      grain: >-
+        Reservation order line item. `item_quantity` is a =1 line flag, so the
+        SUM is a count of line items, not a sum of vehicle quantities.
+      time_anchor: Order item creation date (`sales_item_creation_date`).
+      scope: >-
+        Order type ZOR / YOR / TA. No `sales_group` filter — includes retail,
+        fleet and corporate.
     notes: >-
-      Not used by BYD. Available in BYD Dashboard legacy and Funnel 2.0.
-      Order types map to SAP codes ZOR / YOR / TA (Standard / Fleet / AFM
-      Corporate). `item_quantity` is a line flag, so SUM counts reservation
-      order line items. No `sales_group` filter — includes retail, fleet and
-      corporate.
+      Current implementation in Funnel 2.0. Not used by BYD (available in BYD
+      Dashboard legacy and Funnel 2.0). Order types map to SAP codes ZOR / YOR /
+      TA (Standard / Fleet / AFM Corporate). `item_quantity` is a line flag, so
+      SUM counts reservation order line items. No `sales_group` filter — includes
+      retail, fleet and corporate. See the proposed unique-orders alternative
+      below.
+
+  - name: Total Reservation (Proposed — unique orders)
+    stage: 5
+    source_system: "SAP"
+    domain: ""
+    status: proposed
+    implemented: false
+    definition: >-
+      Number of unique reservations (sales order numbers) created during the
+      selected analysis period.
+    pseudo_code: >-
+      Count distinct ORDER NUMBER where ORDER CREATION DATE is within the
+      selected analysis period and ORDER TYPE IN ('Standard Order', 'Fleet
+      Order', 'AFM Corporate Order').
+    technical:
+      silver_source: [PAD_100_sales_document_header, PAD_100_sales_document_item_data]
+      gold_product: sales_ordr_vn_d
+      measure_columns: []
+    measurement:
+      grain: Distinct reservation order (sales order number).
+      time_anchor: Order creation date.
+      scope: >-
+        Order type ZOR / YOR / TA. Assumes a one-order-one-VIN process change
+        (see notes).
+    notes: >-
+      Proposed alternative to the current Total Reservations KPI, raised for
+      discussion. Counts one reservation per order (distinct order number)
+      instead of summing item quantities. Requires a process change so that one
+      order carries one VIN / order item — today multiple order items are allowed
+      per order, which is why the current KPI sums line items. Not implemented.
 
   - name: Invoices
     stage: 6
     source_system: "SAP"
     domain: ""
-    status: approved
+    status: under_approval
+    implemented: true
     definition: >-
       Total number of vehicle invoices generated during the selected analysis
       period for the selected brand. A sold vehicle invoice adds 1 to the total,
@@ -166,9 +245,72 @@ kpis:
       gold_product: sales_newu_usud_sals_vn_d_view
       serve_stream: CUSTOMER_INVOICES
       measure_columns: [invoices]
+    measurement:
+      grain: >-
+        Net billing-line volume (`sales_volume_quantity`): +1 per sold invoice,
+        -1 per reversal.
+      time_anchor: Billing date (`billing_date`).
+      scope: >-
+        Deduped to `flag_cancellation = 0`. New / Used split by distribution
+        channel (10 / 20). No `sales_group` filter.
     notes: >-
       Net of reversals. Deduped via `flag_cancellation = 0`. New / Used split by
       distribution channel (10 / 20). No `sales_group` filter.
+
+  - name: Total Open Reservations (Reservation Bank)
+    stage: 7
+    source_system: "SAP"
+    domain: ""
+    status: under_approval
+    implemented: false
+    aliases: [Order Bank, Open Orders, Reservation Bank]
+    definition: >-
+      Sum of reservation item quantities for open reservations as of the
+      selected snapshot date.
+    pseudo_code: >-
+      Sum ITEM QUANTITY for reservation items where SALES ORDER NUMBER does not
+      start with '0020' or '0060', REASON FOR REJECTION is blank, SECONDARY
+      STATUS is either 'Sales Order Created' or blank. Additionally, if any
+      duplicate VIN rows exist, they are removed.
+    technical:
+      silver_source: []
+      measure_columns: []
+    measurement:
+      grain: >-
+        Open reservation item quantity as of the snapshot; duplicate VIN rows
+        removed.
+      time_anchor: Snapshot (as-of) date — a point-in-time balance, not a period sum.
+      scope: >-
+        Sales order number not starting '0020' / '0060'; no reason for rejection;
+        secondary status 'Sales Order Created' or blank.
+    notes: >-
+      New KPI — not yet implemented in the Funnel 2.0 pipeline; lineage and
+      measure columns to be defined at implementation. Also known as the order
+      bank / open orders. A stock (snapshot) measure of the open reservation
+      bank, distinct from the Total Reservations flow KPI.
+
+# -----------------------------------------------------------------------------
+# Data-quality invariants — relationships that should always hold within a
+# single reporting period. These are checkable by the `kpi` asserts in
+# dq_framework. Only same-period subset relationships are listed; cross-stage
+# funnel drop-off (Leads > Visits > ...) is an expected *trend*, not a hard
+# invariant, because a lead in one period may convert in a later one.
+# -----------------------------------------------------------------------------
+dq_invariants:
+  - rule: "hot_leads <= leads"
+    rationale: Hot Leads is a qualified subset of Leads on the same lead-creation anchor.
+  - rule: "leads_without_walkins <= leads"
+    rationale: Walk-ins are additive, so excluding them cannot increase the count.
+  - rule: "hot_leads_without_walkins <= hot_leads"
+    rationale: Same walk-in exclusion, applied to Hot Leads.
+  - rule: "test_drives_completed <= test_drives_booked"
+    rationale: Completed is a lifecycle subset of Booked on the same stage.
+  - rule: "test_drives_oepn + test_drives_completed + test_drives_noshow + test_drives_cancelled <= test_drives_booked"
+    rationale: The lifecycle states partition (or sub-partition) the booked test drives.
+  - rule: "web_attributed_<measure> <= <measure>"
+    rationale: Web-attributed counterparts are a subset of each base measure.
+  - rule: "every measure >= 0"
+    rationale: All funnel measures are non-negative counts (Invoices is net of reversals but should not go negative in aggregate).
 
 # -----------------------------------------------------------------------------
 # Supporting business terms — the vocabulary the KPI definitions rely on.
@@ -241,6 +383,28 @@ terms:
       Order (TA).
     related: [Total Reservations, Reservation item]
 
+  - term: Order Bank (Reservation Bank)
+    definition: >-
+      The stock of open reservations outstanding as of a snapshot date — orders
+      taken but not yet invoiced or cancelled. Measured by Total Open
+      Reservations. A point-in-time balance, unlike the flow KPIs that count
+      events within a period.
+    related: [Total Open Reservations (Reservation Bank), Total Reservations, Open reservation]
+
+  - term: Open reservation
+    definition: >-
+      A reservation still live at the snapshot date — its sales order number
+      does not start with '0020' or '0060', it has no reason for rejection, and
+      its secondary status is 'Sales Order Created' or blank.
+    related: [Total Open Reservations (Reservation Bank), Order Bank (Reservation Bank)]
+
+  - term: Snapshot date
+    definition: >-
+      The as-of date a stock (bank) metric is evaluated on. Total Open
+      Reservations is a balance as of the selected snapshot date, rather than a
+      sum over an analysis period.
+    related: [Total Open Reservations (Reservation Bank), Analysis period]
+
   - term: Invoice reversal
     definition: >-
       A cancellation of a previously issued invoice. In the Invoices KPI a sold
@@ -254,3 +418,154 @@ terms:
       funnel — leads, opportunities (visits) and follow-up activities (test
       drives).
     related: [Leads, Hot Leads, Visits, Test Drives]
+
+  - term: Funnel group
+    definition: >-
+      The channel a record originated through — Digital, Walk-in or Others —
+      used to split every key funnel KPI by channel. Derived from the record's
+      normalized SOURCE and TYPE via the lead/enquiry type mapping
+      (`lead_type_mapping_new`); GROUP is the resulting funnel group.
+    related: [Leads, Hot Leads, Visits, Test Drives, Total Reservations, Invoices]
+
+# -----------------------------------------------------------------------------
+# Funnel groups — the channel classification applied to every key funnel KPI.
+# A record's GROUP (Digital / Walk-in / Others) is derived from its normalized
+# SOURCE and TYPE via lead_type_mapping_new. The `mapping` below is the
+# authoritative SOURCE/TYPE -> GROUP lookup.
+# -----------------------------------------------------------------------------
+funnel_groups:
+  description: >-
+    Funnel groups classify where demand originated so every key funnel KPI
+    (Leads → Invoices) can be reported by channel. The group is resolved from
+    the record's normalized SOURCE, rolled up to TYPE, then to GROUP, using the
+    lead / enquiry type mapping (`lead_type_mapping_new`).
+
+  groups:
+    - name: Digital
+      definition: >-
+        Online / digitally-originated demand — website and app forms, ecommerce,
+        social media, live chat / WhatsApp, CRM enquiries and the Blue app.
+    - name: Walk-in
+      definition: >-
+        In-person showroom demand with no digital origin — physical walk-ins and
+        showroom pop-up (kiosk) leads / sales. Walk-ins typically carry no
+        LEAD_ID and are counted separately in Leads / Hot Leads.
+    - name: Others
+      definition: >-
+        Non-digital, non-walk-in channels — B2B / fleet, events, print, SMS,
+        telephone, showroom promotions / re-solicitation, generic product / offer
+        / appointment / prospect enquiries, referrals and migrated records.
+    - name: Unclassified
+      definition: >-
+        Records whose GROUP / TYPE / SOURCE do not map to any known channel
+        (all null). Reported as Unclassified.
+
+  # How the funnel group is identified for each key funnel KPI.
+  per_kpi:
+    - kpi: Leads
+      rule: >-
+        Native — from the lead's normalized source → type → GROUP. Walk-ins are
+        leads originating at a pop-up / walk-in sales office (typically no
+        LEAD_ID); Digital / Others come from `lead_type_mapping_new`.
+    - kpi: Hot Leads
+      rule: >-
+        Same as Leads (Hot Leads is a qualified subset of Leads and inherits its
+        group).
+    - kpi: Visits
+      rule: >-
+        Native — from the opportunity / enquiry source → type → GROUP.
+    - kpi: Test Drives
+      rule: >-
+        Inherited from the parent enquiry's group (a test drive is a follow-up
+        activity on the enquiry).
+    - kpi: Total Reservations
+      rule: >-
+        Inherited from the linked enquiry via `enquiry_id`; Digital is captured
+        as the `web_attributed_*` measures through the lead back-join
+        (`sales_group IN ('001','040')`). Orders with no enquiry link are
+        Unclassified for group.
+    - kpi: Total Reservation (Proposed — unique orders)
+      rule: >-
+        Proposed — same enquiry-inherited grouping as Total Reservations, just
+        counted per distinct order rather than per line item.
+    - kpi: Invoices
+      rule: >-
+        Inherited from the linked order → enquiry (`sales_order_number →
+        enquiry_id`); Digital via the `web_attributed_*` back-join, same as
+        Total Reservations.
+    - kpi: Total Open Reservations (Reservation Bank)
+      rule: >-
+        Not yet implemented — will follow the Total Reservations rule (inherited
+        from the linked enquiry) once the metric is built.
+
+  # Authoritative lead_group / lead_type / lead_source mapping, confirmed by the
+  # steward (order and casing preserved from the source list). null = no source.
+  mapping:
+    - {group: Digital, type: Live Chat, source: Whatsapp}
+    - {group: Digital, type: Social, source: Instagram}
+    - {group: Digital, type: Web, source: Sell Your Car Form}
+    - {group: Digital, type: Live Chat, source: V24}
+    - {group: Digital, type: Web, source: Outbound Call}
+    - {group: Digital, type: Live Chat, source: Whatsapp Chatbot}
+    - {group: Digital, type: Blue, source: Loan Eligibility Form}
+    - {group: Digital, type: Web, source: Offer Form}
+    - {group: Digital, type: Social, source: Bulk Lead}
+    - {group: Digital, type: Social, source: Linkedin}
+    - {group: Digital, type: Web, source: Dubizzle}
+    - {group: Digital, type: Web, source: Web Chatbot}
+    - {group: Digital, type: Blue, source: General Enquiry}
+    - {group: Digital, type: Social, source: Tiktok}
+    - {group: Digital, type: Web, source: Trade-in Form}
+    - {group: Digital, type: Web, source: Enquiry Form}
+    - {group: Digital, type: Web, source: Ai Sales Agent}
+    - {group: Digital, type: Blue, source: Test Drive Form}
+    - {group: Digital, type: Web, source: Inbound Call}
+    - {group: Digital, type: Social, source: Facebook}
+    - {group: Digital, type: Web, source: Loan Eligibility Form}
+    - {group: Digital, type: Web, source: Test Drive Form}
+    - {group: Digital, type: Social, source: Youtube}
+    - {group: Digital, type: CRM, source: General Enquiry}
+    - {group: Digital, type: Web, source: Carswitch}
+    - {group: Digital, type: Web, source: Insider}
+    - {group: Digital, type: Web, source: Web Form}
+    - {group: Digital, type: Social, source: Snapchat}
+    - {group: Digital, type: Web, source: Finance Form}
+    - {group: Digital, type: Web, source: Google Analytics}
+    - {group: Digital, type: Live Chat, source: Cec}
+    - {group: Digital, type: Web, source: Principle Website}
+    - {group: Digital, type: Web, source: Email}
+    - {group: Digital, type: Web, source: Internal}
+    - {group: Digital, type: Live Chat, source: Live Chat}
+    - {group: Digital, type: Blue, source: Book A Service}
+    - {group: Digital, type: Blue, source: Sell Your Car Form}
+
+    - {group: Others, type: SMS, source: Sms}
+    - {group: Others, type: TELEPHONE, source: null}
+    - {group: Others, type: B2B, source: General Enquiry}
+    - {group: Others, type: Showroom, source: Resolicitation}
+    - {group: Others, type: Others, source: Others}
+    - {group: Others, type: Others, source: Reference}
+    - {group: Others, type: Telephone, source: Telephone}
+    - {group: Others, type: B2B, source: Campaign}
+    - {group: Others, type: WEB, source: null}
+    - {group: Others, type: Showroom, source: Promotions}
+    - {group: Others, type: Others, source: Migrated}
+    - {group: Others, type: ENQUIRY ABOUT PRODUCTS, source: null}
+    - {group: Others, type: B2B, source: Bulk Lead}
+    - {group: Others, type: B2B, source: Repeat Purchase}
+    - {group: Others, type: B2B, source: Field Visit}
+    - {group: Others, type: B2B, source: Walk-in}
+    - {group: Others, type: B2B, source: Referral}
+    - {group: Others, type: Events, source: Trade Fair}
+    - {group: Others, type: APPOINTMENT REQUEST, source: null}
+    - {group: Others, type: Events, source: Events}
+    - {group: Others, type: PROSPECT, source: null}
+    - {group: Others, type: Print, source: Newspaper}
+    - {group: Others, type: ENQUIRY ABOUT OFFER, source: null}
+    - {group: Others, type: Events, source: Gov Program}
+
+    - {group: Walk-in, type: Walk-In, source: Walk-in}
+    - {group: Walk-in, type: Walk-In, source: Warrah}
+    - {group: Walk-in, type: Pop-up, source: Sales Pop-up}
+    - {group: Walk-in, type: Pop-up, source: Lead Pop-up}
+    - {group: Walk-in, type: Walk-In, source: Ghq Id}

@@ -19,7 +19,9 @@ FUNNEL_KPIS = [
     "Visits",
     "Test Drives",
     "Total Reservations",
+    "Total Reservation (Proposed — unique orders)",
     "Invoices",
+    "Total Open Reservations (Reservation Bank)",
 ]
 
 
@@ -32,7 +34,7 @@ def _load_renderer():
     return module
 
 
-def test_all_six_funnel_kpis_present():
+def test_all_funnel_kpis_present():
     data = yaml.safe_load(SOURCE.read_text(encoding="utf-8"))
     names = [k["name"] for k in data["kpis"]]
     assert names == FUNNEL_KPIS  # exact set, in journey order
@@ -42,11 +44,42 @@ def test_every_kpi_is_fully_defined():
     data = yaml.safe_load(SOURCE.read_text(encoding="utf-8"))
     for kpi in data["kpis"]:
         for field in ("definition", "pseudo_code", "source_system", "technical"):
-            assert kpi.get(field), f"{kpi.get('name')!r} is missing {field!r}"
-        assert kpi["technical"].get("measure_columns"), kpi["name"]
+            assert kpi.get(field) is not None, f"{kpi.get('name')!r} is missing {field!r}"
+            if field != "technical":
+                assert str(kpi[field]).strip(), f"{kpi.get('name')!r} has empty {field!r}"
+        # Implemented KPIs must carry their serving measure columns; a
+        # not-yet-implemented KPI legitimately has none yet.
+        if kpi.get("implemented", True):
+            assert kpi["technical"].get("measure_columns"), kpi["name"]
+        # Every KPI states its measurement basis.
+        m = kpi.get("measurement", {})
+        for field in ("grain", "time_anchor", "scope"):
+            assert m.get(field), f"{kpi.get('name')!r} is missing measurement.{field}"
 
 
-@pytest.mark.parametrize("name", ["kpis.md", "terms.md"])
+def test_dq_invariants_are_well_formed():
+    data = yaml.safe_load(SOURCE.read_text(encoding="utf-8"))
+    invariants = data.get("dq_invariants")
+    assert invariants, "no dq_invariants defined"
+    for inv in invariants:
+        assert inv.get("rule") and inv.get("rationale"), inv
+
+
+def test_funnel_group_mapping_is_consistent():
+    data = yaml.safe_load(SOURCE.read_text(encoding="utf-8"))
+    fg = data["funnel_groups"]
+    defined = {g["name"] for g in fg["groups"]}
+    assert fg["mapping"], "funnel-group mapping is empty"
+    # Every mapped GROUP is either a defined group or null (unmapped).
+    for row in fg["mapping"]:
+        assert row.get("group") is None or row["group"] in defined, row
+    # Every key funnel KPI has a group-identification rule.
+    ruled = {r["kpi"] for r in fg["per_kpi"]}
+    for kpi in data["kpis"]:
+        assert kpi["name"] in ruled, f"no funnel-group rule for {kpi['name']!r}"
+
+
+@pytest.mark.parametrize("name", ["kpis.md", "terms.md", "funnel_groups.md"])
 def test_generated_markdown_is_in_sync(name):
     renderer = _load_renderer()
     data = yaml.safe_load(SOURCE.read_text(encoding="utf-8"))
