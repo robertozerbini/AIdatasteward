@@ -18,8 +18,8 @@ meta:
   report_table: "prsls_ldmg_actv_dy"
   owner: "Sales Analytics / Data Stewardship"
   status: approved
-  version: "1.0.0"
-  last_reviewed: "2026-07-07"
+  version: "1.1.0"
+  last_reviewed: "2026-07-08"
   source_of_record: "Key KPI Definitions — Sales Funnel 2.0 (steward workbook)"
   related_docs:
     - docs/Funnel2.0.md
@@ -49,8 +49,9 @@ kpis:
       serve_stream: CUSTOMER_LEADS
       measure_columns: [leads, leads_without_walkins]
     notes: >-
-      Org 5000 is excluded throughout. `leads_without_walkins` excludes
-      pop-up / walk-in leads.
+      Org 5000 (the Automall buyer channel) is intentionally excluded throughout
+      — a deliberate scope decision, not data loss (see the "Org 5000 (Automall
+      buyer)" term). `leads_without_walkins` excludes pop-up / walk-in leads.
 
   - name: Hot Leads
     stage: 2
@@ -93,7 +94,8 @@ kpis:
       measure_columns: [opportunities, open_opportunities_14d]
     notes: >-
       A showroom visit is modelled as a C4C opportunity. `open_opportunities_14d`
-      = opportunity still Open with a test-drive gap > 15 days.
+      = opportunity still Open with a test-drive gap > 15 days. Org 5000 (Automall
+      buyer) is intentionally excluded, as for Leads.
 
   - name: Test Drives
     stage: 4
@@ -206,6 +208,17 @@ terms:
       The vehicle brand (SAP division) the report is filtered to. Visits, Test
       Drives, Total Reservations and Invoices are scoped to the selected brand.
     related: [Visits, Total Reservations, Invoices]
+
+  - term: Org 5000 (Automall buyer)
+    definition: >-
+      Sales organization 5000 is the Automall buyer channel (automall / wholesale
+      buyer traffic), not a retail showroom. It is intentionally filtered out of
+      the funnel's front-of-funnel gold products via `sales_organisation_code <>
+      '5000'`, so Leads, Hot Leads, Visits and Test Drives exclude it by design —
+      a deliberate scope decision, not data loss. Silver retains org 5000, so its
+      leads / visits legitimately appear as `source_only` when Silver is compared
+      to Gold in the reconciliation drill-down; they are expected and need no fix.
+    related: [Leads, Hot Leads, Visits, Test Drives]
 
   - term: Qualification (Hot)
     definition: >-

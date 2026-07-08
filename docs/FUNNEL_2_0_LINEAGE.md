@@ -116,7 +116,9 @@ flowchart TD
 
 ### `customer_leads_long`
 Driving source: **`sap_c4c_leads`** (parsed), deduped to the latest row per `LPAD(lead_id,10)`
-via `QUALIFY ROW_NUMBER()`. Filter `sales_organisation <> '5000'`.
+via `QUALIFY ROW_NUMBER()`. Filter `sales_organisation <> '5000'` (org `5000` = the **Automall buyer**
+channel, intentionally excluded from the funnel — a scope decision, not data loss; Silver keeps it,
+so its rows legitimately show as `source_only` in the reconciliation drill-down).
 
 | Joined object | Join key | Purpose |
 |---------------|----------|---------|

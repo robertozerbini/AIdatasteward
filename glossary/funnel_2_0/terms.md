@@ -41,6 +41,12 @@ The SAP sales-document type classifying a reservation. Reservations count ORDER 
 
 **Related:** _Total Reservations_, _Reservation item_
 
+### Org 5000 (Automall buyer)
+
+Sales organization 5000 is the Automall buyer channel (automall / wholesale buyer traffic), not a retail showroom. It is intentionally filtered out of the funnel's front-of-funnel gold products via `sales_organisation_code <> '5000'`, so Leads, Hot Leads, Visits and Test Drives exclude it by design — a deliberate scope decision, not data loss. Silver retains org 5000, so its leads / visits legitimately appear as `source_only` when Silver is compared to Gold in the reconciliation drill-down; they are expected and need no fix.
+
+**Related:** _Leads_, _Hot Leads_, _Visits_, _Test Drives_
+
 ### Pass to branch
 
 The event of handing a lead to a branch for follow-up, timestamped by PASS_TO_BRANCH_TIME. A lead with this timestamp set also qualifies as a Hot Lead, even if not explicitly marked Hot.

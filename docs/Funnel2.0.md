@@ -79,7 +79,7 @@ breakdowns (`lost_oppo_*`).
 
 | KPI | Definition |
 |-----|-----------|
-| **Leads** | `COUNT(DISTINCT lead_id)` from `customer_leads_long` (excludes org `5000`). `leads_without_walkins` excludes pop-up/walk-in leads. |
+| **Leads** | `COUNT(DISTINCT lead_id)` from `customer_leads_long` (excludes org `5000`, the Automall buyer channel — see the org-`5000` note below). `leads_without_walkins` excludes pop-up/walk-in leads. |
 | **Hot Leads** | Lead where `lead_qualification = 'Hot'` **or** `pass_to_branch_time IS NOT NULL`. |
 | **Visits** | `COUNT(1)` opportunities in `customer_enquiries_long`; `open_opportunities_14d` = still `Open` with test-drive gap > 15 days. |
 | **Test Drives** | Booked = any test-drive open/complete/cancel time; Completed = `testdrive_time` set; Open / No-show / Cancelled derived from open time vs `CURRENT_DATE` and cancel time. |
@@ -309,6 +309,12 @@ rows to one per key before the join, so the effective relationship is 1 : 1.
 - **Grain:** `reporting_date × org_key × sales organisation / division / sales group /
   sales office × distribution channel × sales executive × make / model × group / type / source`.
 - **Date filter:** `reporting_date >= 2024-01-01`; org `5000` excluded throughout.
+- **Org `5000` (Automall buyer):** sales organization `5000` is the Automall buyer channel (automall /
+  wholesale buyer traffic), not a retail showroom. It is intentionally filtered out of the
+  front-of-funnel gold products (Leads / Hot Leads / Visits / Test Drives) via
+  `sales_organisation_code <> '5000'` — a deliberate scope decision, **not** data loss. Silver retains
+  org `5000`, so its leads / visits legitimately appear as `source_only` in the Silver↔Gold
+  reconciliation drill-down and need no fix.
 - **Refresh order:** `customer_leads_long` → `customer_enquiries_long` → `prsls_ldmg_actv_dy`
   (enquiries depends on leads; the funnel depends on both).
 - **Write mode:** `CREATE OR REPLACE TABLE` (full rebuild each run).

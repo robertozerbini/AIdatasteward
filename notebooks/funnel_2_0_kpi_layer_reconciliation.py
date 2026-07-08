@@ -26,8 +26,11 @@
 # MAGIC Silver → Gold shrinks (cancellation dedup + org / sales_group / billing_type filters).
 # MAGIC
 # MAGIC **Expected divergence:** Silver → Gold naturally shrinks (dedup to latest row per key,
-# MAGIC `sales_organisation <> '5000'`, date filters). Gold → Gold-Serve should reconcile closely;
-# MAGIC a gap there — for a given org/division — is the signal worth investigating.
+# MAGIC `sales_organisation <> '5000'`, date filters). Org **5000 is the Automall buyer channel** and
+# MAGIC is intentionally excluded from the Leads / Hot Leads / Visits / Test Drives Gold products — a
+# MAGIC deliberate scope decision, not data loss, so its Silver rows legitimately show as `source_only`
+# MAGIC in the drill-down. Gold → Gold-Serve should reconcile closely; a gap there — for a given
+# MAGIC org/division — is the signal worth investigating.
 
 # COMMAND ----------
 
@@ -208,6 +211,9 @@ REGISTRY = [
         "SALES_ORGANIZATION", "DIVISION",
         "COUNT(DISTINCT LPAD(COALESCE(C4CLEADID, REPLACE(LEAD_ID,'C4C-','')), 10, '0'))",
         ""),
+    # Gold excludes org 5000 (the Automall buyer channel) by design on Leads / Hot Leads / Visits /
+    # Test Drives — an intentional scope decision, not data loss. Silver keeps 5000, so its rows
+    # appear as source_only in the Silver<->Gold drill-down and are expected (no fix needed).
     ("Leads", "gold", f"{GOLD}.customer_leads_long",
         "DATE(LEAD_CREATION_DATE)",
         "SALES_ORGANISATION_CODE", "DIVISION",
@@ -1341,8 +1347,9 @@ else:
 # MAGIC   join back-fill — e.g. leads sourced via a different key).
 # MAGIC - The upstream population is bounded by the date window / filters; the downstream
 # MAGIC   *existence* set is **not** date-bounded, so near-boundary date shifts don't create false
-# MAGIC   positives. Org `5000` is physically excluded from the Gold products, so those rows will
-# MAGIC   legitimately appear as `source_only` for Leads / Visits / Test Drives.
+# MAGIC   positives. Org `5000` (the **Automall buyer** channel) is intentionally excluded from the
+# MAGIC   Gold products, so those rows will legitimately appear as `source_only` for Leads / Visits /
+# MAGIC   Test Drives — expected by design, not a gold-load gap.
 
 # COMMAND ----------
 
@@ -1457,8 +1464,9 @@ banner(
         "product_only = key is downstream but not upstream = key-derivation / join back-fill.",
         "'0 distinct keys' means that boundary is clean; a non-zero count prints a sample below it."],
     actions=[
-        "source_only > 0 for Leads/Visits/Test Drives: expected only for org 5000 (excluded from "
-        "gold) - if the sample shows other orgs, that is a genuine gold-load gap to fix.",
+        "source_only > 0 for Leads/Visits/Test Drives: expected only for org 5000 (the Automall "
+        "buyer channel, intentionally excluded from gold) - if the sample shows other orgs, that "
+        "is a genuine gold-load gap to fix.",
         "product_only > 0: usually benign (rows sourced via a different key) - confirm in the sample.",
         "Use the granular_sample_kpi / granular_sample_rows widgets to focus and enlarge samples."])
 

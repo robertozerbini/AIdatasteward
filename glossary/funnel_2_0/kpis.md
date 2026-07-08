@@ -5,7 +5,7 @@
 
 _Lead-to-invoice automotive sales funnel. Report table: `prsls_ldmg_actv_dy`._
 
-**Owner:** Sales Analytics / Data Stewardship · **Status:** approved · **Version:** 1.0.0 · **Last reviewed:** 2026-07-07
+**Owner:** Sales Analytics / Data Stewardship · **Status:** approved · **Version:** 1.1.0 · **Last reviewed:** 2026-07-08
 
 ## Funnel at a glance
 
@@ -37,7 +37,7 @@ _Lead-to-invoice automotive sales funnel. Report table: `prsls_ldmg_actv_dy`._
 - Serving stream: `CUSTOMER_LEADS`
 - Measure column(s): `leads`, `leads_without_walkins`
 
-> **Notes.** Org 5000 is excluded throughout. `leads_without_walkins` excludes pop-up / walk-in leads.
+> **Notes.** Org 5000 (the Automall buyer channel) is intentionally excluded throughout — a deliberate scope decision, not data loss (see the "Org 5000 (Automall buyer)" term). `leads_without_walkins` excludes pop-up / walk-in leads.
 
 ### 2. Hot Leads
 
@@ -75,7 +75,7 @@ _Lead-to-invoice automotive sales funnel. Report table: `prsls_ldmg_actv_dy`._
 - Serving stream: `CUSTOMER_ENQUIRIES`
 - Measure column(s): `opportunities`, `open_opportunities_14d`
 
-> **Notes.** A showroom visit is modelled as a C4C opportunity. `open_opportunities_14d` = opportunity still Open with a test-drive gap > 15 days.
+> **Notes.** A showroom visit is modelled as a C4C opportunity. `open_opportunities_14d` = opportunity still Open with a test-drive gap > 15 days. Org 5000 (Automall buyer) is intentionally excluded, as for Leads.
 
 ### 4. Test Drives
 
