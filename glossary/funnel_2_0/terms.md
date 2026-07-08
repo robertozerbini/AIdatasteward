@@ -53,11 +53,23 @@ The stock of open reservations outstanding as of a snapshot date — orders take
 
 **Related:** _Total Open Reservations (Reservation Bank)_, _Total Reservations_, _Open reservation_
 
+### Order tagged
+
+A reservation order carrying the `customer_tagged` business flag — an order that has been tagged to an identified end customer, as opposed to an unallocated stock order. It is a business flag derived on the order fact (`sales_ordr_vn_d`), alongside `customer_linked` (the retail-linked reservation flag). **To verify:** the exact tagging rule lives in the `sales_ordr_vn_d` build, which is not in this repo, so the precise derivation must be confirmed against that pipeline.
+
+**Related:** _Total Reservations_, _Order with deposit_, _Reservation item_
+
 ### Order type
 
 The SAP sales-document type classifying a reservation. Reservations count ORDER TYPE IN Standard Order (ZOR), Fleet Order (YOR) and AFM Corporate Order (TA).
 
 **Related:** _Total Reservations_, _Reservation item_
+
+### Order with deposit
+
+A reservation order for which a customer deposit / down-payment has been recorded. Surfaced as the `orders_with_deposite` sub-measure of Total Reservations, so it is a subset of the reservations counted in that stage. The deposit is identified from the sales-document flow via the down-payment request billing type FAZ (`PAD_100_sales_document_flow` ⋈ `PAD_100_billing_document_header_data`), with the down-payment amount posted to special GL account `A` (`DWPYMNT`) in `PAD_100_accounting_document_segment`.
+
+**Related:** _Total Reservations_, _Reservation item_, _Order type_
 
 ### Pass to branch
 

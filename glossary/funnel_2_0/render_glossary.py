@@ -137,6 +137,27 @@ def render_kpis(data: dict) -> str:
         )
     out.append("")
 
+    # Sub-measures & order flags — measure columns / business flags that refine a
+    # headline KPI (e.g. deposit / tagged breakdowns of Total Reservations).
+    sub_rows = [(k, s) for k in kpis for s in (k.get("sub_measures") or [])]
+    if sub_rows:
+        out.append("## Sub-measures & order flags\n")
+        out.append(
+            "Measure columns and business flags that break a headline KPI down "
+            "further — each is a subset / attribute of its parent KPI.\n"
+        )
+        out.append("| Sub-measure | Column / flag | Parent KPI | Definition |")
+        out.append("|-------------|---------------|------------|------------|")
+        for k, s in sub_rows:
+            column = s.get("column")
+            out.append(
+                f"| **{_cell(s['name'])}** "
+                f"| {f'`{_cell(column)}`' if column else '—'} "
+                f"| {_cell(k['name'])} "
+                f"| {_cell(s['definition'])} |"
+            )
+        out.append("")
+
     # Data-quality invariants — testable contracts for the dq_framework asserts.
     invariants = data.get("dq_invariants") or []
     if invariants:
