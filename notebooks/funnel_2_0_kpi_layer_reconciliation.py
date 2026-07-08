@@ -838,6 +838,10 @@ except Exception as e:
 # MAGIC
 # MAGIC After a master-data fix, the refresh order is **Sales Orders → Invoices (New & Used) → `_dy`
 # MAGIC → report**. Master data & the `GET_ORG_KEY` UDF are per-env (see the parameters cell).
+# MAGIC
+# MAGIC The `Source:` rows from 10a and 10b can't be enriched — **section 10c** drills every one of
+# MAGIC them down to the key to report (`sales_organization_code · division_code · sales_office_code`)
+# MAGIC and the owner to route it to, so you have a concrete hand-off list for the org-structure / SAP teams.
 
 # COMMAND ----------
 
@@ -877,7 +881,8 @@ banner(
         "'Source:' buckets need a source-data fix — the office code itself is missing or malformed."],
     actions=[
         "If the master-data-gap bucket dominates, go to 10b and generate the enrichment fixes.",
-        "Source buckets are not fixable by enrichment — raise them with the org-structure owners."])
+        "Source buckets are not fixable by enrichment — go to 10c for the exact keys to raise with "
+        "the org-structure / SAP owners."])
 try:
     display(spark.sql(masterdata_overview_sql))
 except Exception as e:
@@ -893,7 +898,9 @@ WITH dq AS (
   SELECT {_md_org} AS sales_organization_code,
          {_md_div} AS division_code,
          {_md_off} AS sales_office_code,
-         COUNT(*)  AS funnel_rows
+         COUNT(*)  AS funnel_rows,
+         MIN(reporting_date) AS first_seen,
+         MAX(reporting_date) AS last_seen
   FROM {FUNNEL_TABLE}
   WHERE UPPER(sales_office) = 'UNKNOWN'
     AND reporting_date BETWEEN DATE('{start_date}') AND DATE('{end_date}')
@@ -956,7 +963,8 @@ banner(
         "Fixable-missing-description -> UPDATE business_sales_office_description from sales_office_description.",
         "Fixable-missing-record -> INSERT the office (enriched from PAD_100_sales_office_texts).",
         "Then refresh Sales Orders -> Invoices -> _dy -> report and re-run 10a (expect it to shrink).",
-        "The detail table below lists each group to drive those fixes."])
+        "The detail table below lists each group to drive those fixes.",
+        "'Source:' rows here are not enrichment-fixable -> 10c lists their keys to report to source."])
 try:
     display(spark.sql(masterdata_rootcause_sql))
     print()
@@ -968,6 +976,286 @@ except Exception as e:
     print("Master-data root-cause FAILED —", str(e).splitlines()[0])
     print("(Check that the GET_ORG_KEY UDF and master-data schema for this env are correct — "
           "see the org_key_udf / masterdata_schema widgets.)")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 10c. Source issues — IDs to report to source
+# MAGIC The two `Source:` buckets in **10a** (office code missing / blank / `UNKN`, or `division_code
+# MAGIC = 0`) and the two `Source:` classifications in **10b** (malformed org structure, office not in
+# MAGIC SAP texts) are **not fixable by enrichment** — they need an upstream org-structure / SAP fix.
+# MAGIC To raise them you need the concrete keys, not just a count. This section drills every
+# MAGIC source-classified group down to its reportable identifier —
+# MAGIC `sales_organization_code · division_code · sales_office_code` — with the owner to route it to
+# MAGIC and the impact window (`first_seen` / `last_seen`, `funnel_rows`).
+# MAGIC
+# MAGIC | root_cause | report_to | what to hand over |
+# MAGIC |-----------|-----------|-------------------|
+# MAGIC | `Source: sales_office_code missing / blank / UNKN` | SAP / source system | the org·division rows whose funnel line carries no office code |
+# MAGIC | `Source: division_code = 0` | Org-structure owner | the org·office rows whose division did not resolve |
+# MAGIC | `Source: malformed org structure (GET_ORG_KEY = -99)` | Org-structure owner | the org·division that has no `division_key` |
+# MAGIC | `Source: office not in SAP texts` | SAP (office master) | the office code missing from `PAD_100_sales_office_texts` |
+# MAGIC
+# MAGIC The detail table is the hand-off list; filter it by `report_to` to split the work per owner.
+
+# COMMAND ----------
+
+# 10c. Consolidated source-issues report. Reuses the 10b enrichment CTE (dq/enr) for the
+# code-present Source classifications, and adds the 10a source buckets (office code missing /
+# blank / UNKN, division_code = 0) which never enter dq. The two populations are disjoint — dq
+# filters to a usable office code + division <> 0, source_code is the complement — so no group is
+# double-counted. Each source group is resolved to its reportable key + owner.
+_md_source_cte = f"""{_md_enr_cte},
+source_gap AS (
+  -- code-present groups from 10b that classify as Source (need org-structure / SAP fix upstream)
+  SELECT {_md_root_case} AS root_cause,
+         sales_organization_code, division_code, sales_office_code,
+         funnel_rows, first_seen, last_seen
+  FROM enr
+  WHERE {_md_root_case} LIKE 'Source:%'
+),
+source_code AS (
+  -- the 10a source buckets: office code missing / blank / UNKN, or division_code = 0.
+  -- Same precedence as 10a (office-code test first), so the labels reconcile with the 10a counts.
+  SELECT
+    CASE WHEN {_md_off} IS NULL OR TRIM({_md_off}) = '' OR UPPER({_md_off}) = 'UNKN'
+         THEN 'Source: sales_office_code missing / blank / UNKN'
+         ELSE 'Source: division_code = 0' END AS root_cause,
+    {_md_org} AS sales_organization_code,
+    {_md_div} AS division_code,
+    COALESCE(NULLIF(TRIM({_md_off}), ''), '(blank)') AS sales_office_code,
+    COUNT(*)            AS funnel_rows,
+    MIN(reporting_date) AS first_seen,
+    MAX(reporting_date) AS last_seen
+  FROM {FUNNEL_TABLE}
+  WHERE UPPER(sales_office) = 'UNKNOWN'
+    AND reporting_date BETWEEN DATE('{start_date}') AND DATE('{end_date}')
+    AND ({_md_off} IS NULL OR TRIM({_md_off}) = '' OR UPPER({_md_off}) = 'UNKN' OR {_md_div} = '0')
+    {_md_of} {_md_df}
+  GROUP BY 1, 2, 3, 4
+),
+source_union AS (
+  SELECT * FROM source_gap
+  UNION ALL
+  SELECT * FROM source_code
+),
+source_all AS (
+  SELECT
+    CASE
+      WHEN root_cause = 'Source: sales_office_code missing / blank / UNKN'
+           THEN 'SAP / source system — office code missing on the funnel row'
+      WHEN root_cause = 'Source: division_code = 0'
+           THEN 'Org-structure owner — division_code did not resolve (0)'
+      WHEN root_cause = 'Source: malformed org structure (GET_ORG_KEY = -99)'
+           THEN 'Org-structure owner — org/division has no division_key'
+      WHEN root_cause = 'Source: office not in SAP texts'
+           THEN 'SAP — add office to PAD_100_sales_office_texts'
+      ELSE 'Source owner'
+    END AS report_to,
+    root_cause, sales_organization_code, division_code, sales_office_code,
+    funnel_rows, first_seen, last_seen
+  FROM source_union
+)"""
+
+# Roll-up: one row per owner / root_cause, so you can see the size of each hand-off at a glance.
+masterdata_source_summary_sql = f"""{_md_source_cte}
+SELECT report_to, root_cause,
+       COUNT(*)         AS issue_groups,
+       SUM(funnel_rows) AS funnel_rows
+FROM source_all
+GROUP BY 1, 2
+ORDER BY funnel_rows DESC
+"""
+
+# Detail: the actual keys to report. This is the list you hand to the source owners.
+masterdata_source_detail_sql = f"""{_md_source_cte}
+SELECT report_to, root_cause,
+       sales_organization_code, division_code, sales_office_code,
+       funnel_rows, first_seen, last_seen
+FROM source_all
+ORDER BY funnel_rows DESC, sales_organization_code, division_code, sales_office_code
+"""
+
+banner(
+    "10c. SOURCE ISSUES — IDs to report to source",
+    how_to_read=[
+        "Every source-classified group from 10a + 10b, resolved to a reportable key.",
+        "report_to = which owner to raise it with; root_cause = why it can't be enriched.",
+        "The key to quote is sales_organization_code · division_code · sales_office_code.",
+        "funnel_rows / first_seen / last_seen size and date-bound the impact for the ticket."],
+    actions=[
+        "Filter the detail by report_to and hand each owner their list of keys.",
+        "Org-structure owner: fix the malformed org / unresolved division in eudu_mdata_dtac_orgstrc.",
+        "SAP / source system: add the missing office (PAD_100_sales_office_texts) or the office code.",
+        "These are NOT enrichment-fixable — do not send them through the 10b UPDATE / INSERT runbook."])
+try:
+    display(spark.sql(masterdata_source_summary_sql))
+    print()
+    banner("10c (detail). Each source-issue group with the key to report",
+           how_to_read=["One row per (org, division, office) to raise upstream, most rows first."],
+           actions=["Quote sales_organization_code · division_code · sales_office_code to the owner."])
+    display(spark.sql(masterdata_source_detail_sql))
+except Exception as e:
+    print("Source-issues report FAILED —", str(e).splitlines()[0])
+    print("(Check that the GET_ORG_KEY UDF and master-data schema for this env are correct — "
+          "see the org_key_udf / masterdata_schema widgets.)")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 10d. Source issues — underlying record IDs (lead_id / enquiry_id / order / invoice)
+# MAGIC 10c lists the source-issue **groups** (`org · division · office`) and counts, but a source
+# MAGIC owner usually needs the **actual records** behind them. The funnel `prsls_ldmg_actv_dy` is
+# MAGIC pre-aggregated (no `lead_id` / `enquiry_id`), so — exactly like the STEP-3 source query — the
+# MAGIC IDs are recovered by joining the **Gold products** back to the source-issue keys:
+# MAGIC
+# MAGIC | source_object | Gold object | id reported |
+# MAGIC |---------------|-------------|-------------|
+# MAGIC | `LEAD` | `customer_leads_long` | `lead_id` |
+# MAGIC | `OPPORTUNITY` | `customer_enquiries_long` | `enquiry_id` (opportunity id) |
+# MAGIC | `TESTDRIVE` | `customer_enquiries_long` | `enquiry_id` |
+# MAGIC | `ORDER` | `sales_ordr_vn_d` | `sales_document` |
+# MAGIC | `INVOICE` | `sales_newu_usud_sals_vn_d_view` | `billing_document` |
+# MAGIC
+# MAGIC Two join strategies, matching the STEP-3 query:
+# MAGIC - **office code present** (`malformed org structure`, `office not in SAP texts`) → join on
+# MAGIC   `org · division · sales_office_code` (the code itself failed to resolve; no date needed).
+# MAGIC - **office missing / division 0** (`sales_office_code missing / blank / UNKN`, `division_code
+# MAGIC   = 0`) → join on `reporting_date · org · division` where the Gold row's office is null/blank.
+# MAGIC
+# MAGIC The office / id / date columns follow the notebook registry and the STEP-3 query. If an object
+# MAGIC prints `FAILED`, its column names differ in your schema — adjust `SOURCE_ID_OBJECTS` below.
+
+# COMMAND ----------
+
+from pyspark.sql import functions as F
+
+# Reuse the 10b enrichment CTE (dq/enr) for the office-present classifications; src_missing keeps
+# reporting_date so the office-missing / division-0 rows can be matched to the Gold record's date.
+_source_id_cte = f"""{_md_enr_cte},
+src_present AS (
+  -- office code present but unresolvable: match on the actual org · division · office code
+  SELECT sales_organization_code, division_code, sales_office_code,
+         {_md_root_case} AS root_cause
+  FROM enr
+  WHERE {_md_root_case} IN (
+      'Source: malformed org structure (GET_ORG_KEY = -99)',
+      'Source: office not in SAP texts')
+),
+src_missing AS (
+  -- office code missing / blank / UNKN, or division_code = 0: no office code to match, so keep
+  -- reporting_date and match the Gold row on date · org · division with a null/blank office.
+  SELECT DISTINCT reporting_date,
+         {_md_org} AS sales_organization_code,
+         {_md_div} AS division_code,
+         CASE WHEN {_md_off} IS NULL OR TRIM({_md_off}) = '' OR UPPER({_md_off}) = 'UNKN'
+              THEN 'Source: sales_office_code missing / blank / UNKN'
+              ELSE 'Source: division_code = 0' END AS root_cause
+  FROM {FUNNEL_TABLE}
+  WHERE UPPER(sales_office) = 'UNKNOWN'
+    AND reporting_date BETWEEN DATE('{start_date}') AND DATE('{end_date}')
+    AND ({_md_off} IS NULL OR TRIM({_md_off}) = '' OR UPPER({_md_off}) = 'UNKN' OR {_md_div} = '0')
+    {_md_of} {_md_df}
+)"""
+
+# Per source object: (label, Gold object, id_expr, date_expr, org_col, div_col, office_col, extra_where).
+# Columns follow the STEP-3 source query verbatim (its proven prod columns), so 10d reconciles with
+# that reference: OPPORTUNITY dates on appointment_visit_time, INVOICE reports billing_document, and
+# the TESTDRIVE COALESCE order matches STEP-3. customer_enquiries_long's office is sales_office_code
+# (the funnel enrichment key); STEP-3 used branch_id for its malformed-opportunity join — swap it
+# here if branch_id (not sales_office_code) is the column that failed to resolve in your schema.
+SOURCE_ID_OBJECTS = [
+    ("LEAD", f"{GOLD}.customer_leads_long", "LEAD_ID",
+     "DATE(LEAD_CREATION_DATE)", "SALES_ORGANISATION_CODE", "DIVISION", "SALES_OFFICE", ""),
+    ("OPPORTUNITY", f"{GOLD}.customer_enquiries_long", "ENQUIRY_ID",
+     "DATE(appointment_visit_time)", "SALES_ORGANISATION_CODE", "DIVISION_CODE", "SALES_OFFICE_CODE", ""),
+    ("TESTDRIVE", f"{GOLD}.customer_enquiries_long", "ENQUIRY_ID",
+     "DATE(COALESCE(TESTDRIVE_TIME, TESTDRIVE_CANCELLED_TIME, TESTDRIVE_OPEN_TIME))",
+     "SALES_ORGANISATION_CODE", "DIVISION_CODE", "SALES_OFFICE_CODE",
+     "AND COALESCE(TESTDRIVE_TIME, TESTDRIVE_CANCELLED_TIME, TESTDRIVE_OPEN_TIME) IS NOT NULL"),
+    ("ORDER", f"{FACT}.sales_ordr_vn_d", "sales_document",
+     "DATE(sales_item_creation_date)", "sales_organization", "division", "sales_office",
+     "AND UPPER(order_type) IN ('ZOR','YOR','TA')"),
+    ("INVOICE", f"{FACT}.sales_newu_usud_sals_vn_d_view", "billing_document",
+     "DATE(day)", "sales_organization_code", "division_key", "sales_office", ""),
+]
+
+
+def _source_id_sql(label, obj, id_expr, date_expr, org, div, office, extra_where):
+    g_org, g_div = f"CAST(g.{org} AS STRING)", f"CAST(g.{div} AS STRING)"
+    g_off = f"CAST(g.{office} AS STRING)"
+    win = f"{date_expr} BETWEEN DATE('{start_date}') AND DATE('{end_date}')"
+    return f"""{_source_id_cte}
+    SELECT DISTINCT p.root_cause AS root_cause, '{label}' AS source_object,
+           {date_expr}          AS record_date,
+           {g_org}              AS sales_organization_code,
+           {g_div}              AS division_code,
+           {g_off}              AS sales_office_code,
+           CAST({id_expr} AS STRING) AS id
+    FROM {obj} g
+    INNER JOIN src_present p
+       ON {g_org} = p.sales_organization_code
+      AND {g_div} = p.division_code
+      AND {g_off} = p.sales_office_code
+    WHERE {win} {extra_where}
+    UNION ALL
+    SELECT DISTINCT p.root_cause, '{label}',
+           {date_expr}, {g_org}, {g_div}, {g_off}, CAST({id_expr} AS STRING)
+    FROM {obj} g
+    INNER JOIN src_missing p
+       ON {date_expr} = p.reporting_date
+      AND {g_org} = p.sales_organization_code
+      AND {g_div} = p.division_code
+    WHERE {win} {extra_where}
+      AND NULLIF(TRIM({g_off}), '') IS NULL
+    """
+
+
+banner(
+    "10d. SOURCE ISSUES — underlying record IDs",
+    how_to_read=[
+        "The individual Gold records behind each source-issue group in 10c.",
+        "source_object = LEAD / OPPORTUNITY / TESTDRIVE / ORDER / INVOICE; id = its business key.",
+        "root_cause matches 10c; record_date is the record's own business date."],
+    actions=[
+        "Hand these ids to the owner named in 10c for the matching key.",
+        "An object printing FAILED = its office/id/date column differs in your schema -> "
+        "adjust SOURCE_ID_OBJECTS.",
+        "Recovery is a dimension join (the funnel is pre-aggregated), so treat the ids as the "
+        "records that fed the UNKNOWN funnel rows, not a guaranteed 1:1."])
+
+source_id_frames = []
+for label, obj, id_expr, date_expr, org, div, office, extra_where in SOURCE_ID_OBJECTS:
+    try:
+        df = spark.sql(_source_id_sql(label, obj, id_expr, date_expr, org, div, office, extra_where))
+        n = df.count()
+        print(f"[{label:<11}] {n} record id(s) recovered from {obj}")
+        if n:
+            source_id_frames.append(df)
+    except Exception as e:
+        print(f"[{label:<11}] FAILED — {str(e).splitlines()[0]}")
+
+if source_id_frames:
+    source_ids = source_id_frames[0]
+    for extra in source_id_frames[1:]:
+        source_ids = source_ids.unionByName(extra)
+    source_ids = source_ids.cache()
+    print()
+    banner("10d (summary). Distinct record ids by source_object x root_cause",
+           how_to_read=["How many business ids each object contributes to each source root cause."])
+    display(source_ids.groupBy("root_cause", "source_object")
+                      .agg(F.countDistinct("id").alias("distinct_ids"),
+                           F.count(F.lit(1)).alias("rows"))
+                      .orderBy("root_cause", "source_object"))
+    print()
+    banner("10d (detail). Business ids to report to source",
+           how_to_read=["One row per (source_object, id): the lead_id / enquiry_id / sales_document / "
+                        "sales_order_number behind each source-issue funnel row."],
+           actions=["Filter by root_cause / source_object and hand the ids to the owner from 10c."])
+    display(source_ids.orderBy("root_cause", "source_object",
+                               "sales_organization_code", "division_code", "record_date"))
+else:
+    print("No source-issue record ids recovered (or every object failed — see the messages above).")
 
 # COMMAND ----------
 
