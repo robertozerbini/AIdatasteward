@@ -1267,8 +1267,13 @@ else:
 # MAGIC
 # MAGIC **Scope of key-level anti-joins**
 # MAGIC - **Silver ↔ Gold** — full key-level comparison (both carry the business key).
-# MAGIC - **Invoices** — invoice rows whose order key isn't found in `sales_ordr_vn_d`.
-# MAGIC   (Total Reservation attribution is order-keyed, not a token anti-join — see section 9c.)
+# MAGIC - **Invoices** — two key-level views. **Silver ↔ Gold on `billing_document`**: billing lines
+# MAGIC   in Silver `PAD_100_billing_details_new` absent from the Gold invoice view
+# MAGIC   `sales_newu_usud_sals_vn_d_view` (`source_only` = the cancellation-dedup / org / sales_group
+# MAGIC   / billing_type shrink the summary flags as `note`; `product_only` should be ~empty). Plus
+# MAGIC   the **invoice → order linkage**: invoice rows whose `sales_order_number` isn't found in
+# MAGIC   `sales_ordr_vn_d`. (Total Reservation attribution is order-keyed, not a token anti-join —
+# MAGIC   see section 9c.)
 # MAGIC - **Gold ↔ Gold-Serve** — *not available at key level*: `prsls_ldmg_actv_dy` is a
 # MAGIC   pre-aggregated table with no `lead_id` / `enquiry_id`. Use the group-grain checks in
 # MAGIC   sections 5–7 for that boundary.
@@ -1358,6 +1363,25 @@ DRILL = [
     # org+div+office enquiry_id tokens, and many have a null enquiry_id). See section 9c for the
     # correct order-level view (distinct sales_document + item_quantity, includes null enquiry_id).
 
+    # Invoices · silver<->gold — the billing-line drop-off between the raw Silver billing table and
+    # the curated Gold invoice view, keyed on billing_document (the same INVOICE key section 10d
+    # uses). source_only = billing_documents in Silver PAD_100_billing_details_new that never reach
+    # the Gold view — i.e. rows removed by the Gold build's cancellation dedup (flag_cancellation)
+    # and org / sales_group / billing_type filters, the shrink the summary reports as `note`.
+    # product_only = billing_documents in the Gold view (same window on `day`) not found in the
+    # windowed Silver lines (expected near-empty; a non-trivial count points at a key-shape mismatch).
+    ("Invoices",
+     ("silver", f"{SILVER}.PAD_100_billing_details_new", "billing_document",
+      _win("billing_date") + " AND NULLIF(billing_document,'') IS NOT NULL AND sales_volume_quantity <> 0"),
+     ("gold", f"{FACT}.sales_newu_usud_sals_vn_d_view", "billing_document", "1=1"),
+     ("silver", "sales_organization", "division"),
+     ("gold", "sales_organization_code", "division_key"),
+     "day",
+     ["source_only", "product_only"]),
+
+    # Invoices · gold_serve_fact->orders — invoice rows whose order key (sales_order_number) isn't
+    # found in sales_ordr_vn_d (the invoice->order linkage, distinct from the silver<->gold billing
+    # drop-off above).
     ("Invoices",
      ("gold_serve_fact", f"{FACT}.sales_newu_usud_sals_vn_d_view", "sales_order_number",
       _win("day") + " AND NULLIF(sales_order_number,'') IS NOT NULL"),
@@ -1397,6 +1421,9 @@ banner(
     actions=[
         "source_only > 0 for Leads/Visits/Test Drives: expected only for org 5000 (excluded from "
         "gold) - if the sample shows other orgs, that is a genuine gold-load gap to fix.",
+        "Invoices silver->gold source_only > 0 is expected (cancellation dedup + org / sales_group / "
+        "billing_type filters shrink Silver->Gold) - spot-check flag_cancellation / sales_group in "
+        "the sample; a billing_document that looks live and unfiltered is the one to chase.",
         "product_only > 0: usually benign (rows sourced via a different key) - confirm in the sample.",
         "Use the granular_sample_kpi / granular_sample_rows widgets to focus and enlarge samples."])
 
@@ -1408,11 +1435,13 @@ for kpi, left, right, ldim, rdim, gdate, directions in DRILL:
     if "source_only" in directions:
         # sample windowed silver (+ its dim filters); existence = all-history gold (unbounded)
         left_f = (l_lbl, l_obj, l_key, l_where + _dim_filters(ldim[1], ldim[2]))
-        anti_sample(f"{kpi} · source_only", left_f, right, SAMPLE_N)
+        # include the layer boundary in the title so KPIs with more than one drill (Invoices) stay
+        # distinguishable at a glance.
+        anti_sample(f"{kpi} · {l_lbl}->{r_lbl} · source_only", left_f, right, SAMPLE_N)
     if "product_only" in directions:
         # sample gold windowed to the SAME analysis window (+ dim filters); existence = windowed
         # silver (all orgs). Symmetric window prevents historical gold rows being false positives.
         gold_where = r_where + (f" AND {_win(gdate)}" if gdate else "") + _dim_filters(rdim[1], rdim[2])
         prod_left = (r_lbl, r_obj, r_key, gold_where)
         src_right = (l_lbl, l_obj, l_key, l_where)
-        anti_sample(f"{kpi} · product_only", prod_left, src_right, SAMPLE_N)
+        anti_sample(f"{kpi} · {r_lbl}->{l_lbl} · product_only", prod_left, src_right, SAMPLE_N)
