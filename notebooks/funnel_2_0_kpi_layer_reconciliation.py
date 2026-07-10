@@ -1239,7 +1239,10 @@ if source_id_frames:
     source_ids = source_id_frames[0]
     for extra in source_id_frames[1:]:
         source_ids = source_ids.unionByName(extra)
-    source_ids = source_ids.cache()
+    # NOTE: no .cache() here — serverless compute rejects DataFrame persist
+    # (NOT_SUPPORTED_WITH_SERVERLESS: PERSIST TABLE). These id sets are small, so the two
+    # displays below simply recompute; correctness is unchanged and the notebook stays
+    # serverless-compatible.
     print()
     banner("10d (summary). Distinct record ids by source_object x root_cause",
            how_to_read=["How many business ids each object contributes to each source root cause."])
