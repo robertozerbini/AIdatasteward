@@ -56,11 +56,16 @@ dbutils.widgets.text("funnel_schema_override", "", "Funnel schema override (blan
 dbutils.widgets.text("masterdata_schema", "", "Master-data schema (blank = by env)")
 dbutils.widgets.text("org_key_udf", "", "GET_ORG_KEY function (blank = by env)")
 
+# Print the exact SQL each check runs, so users can copy it into a %sql cell and verify the
+# numbers themselves. Default on; set to "no" to silence the queries and keep only the results.
+dbutils.widgets.dropdown("print_sql", "yes", ["yes", "no"], "Print each check's SQL")
+
 env = dbutils.widgets.get("env")
 start_date = dbutils.widgets.get("start_date")
 end_date = dbutils.widgets.get("end_date")
 filter_org = dbutils.widgets.get("filter_sales_org").strip()
 filter_div = dbutils.widgets.get("filter_division").strip()
+SHOW_SQL = dbutils.widgets.get("print_sql").strip().lower() == "yes"
 
 SILVER_GOLD = dbutils.widgets.get("silver_gold_schema").strip()
 FACT = dbutils.widgets.get("sales_fact_schema").strip()
@@ -108,10 +113,14 @@ print(f"GET_ORG_KEY UDF  : {GET_ORG_KEY}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 1b. Output formatting helper
+# MAGIC ## 1b. Output formatting helpers
 # MAGIC Every result below is preceded by a printed banner — **a title, how to read the table,
 # MAGIC and the action to take** — so each output cell explains itself without scrolling back to
 # MAGIC the markdown.
+# MAGIC
+# MAGIC Each check also **echoes the exact SQL it runs** (via `show_sql`), so you can copy any query
+# MAGIC into a `%sql` cell and reproduce the numbers yourself. Turn the echo off with the `print_sql`
+# MAGIC widget (set it to `no`) if you want results only.
 
 # COMMAND ----------
 
@@ -133,6 +142,17 @@ def banner(title, how_to_read=None, actions=None):
         print("WHAT TO DO")
         for b in actions:
             print(f"  > {b}")
+    print()
+
+
+def show_sql(sql, label="query"):
+    """Print the exact SQL a check runs, so users can copy it into a %sql cell and reproduce
+    the numbers themselves. Every result-producing section calls this before executing, so each
+    check is self-verifiable. Toggle the whole notebook's SQL echo with the `print_sql` widget."""
+    if not SHOW_SQL:
+        return
+    print(f"-- SQL · {label} " + "-" * max(3, 66 - len(label)))
+    print(sql.strip())
     print()
 
 
@@ -387,6 +407,7 @@ errors = []          # (kpi, layer, object, message)
 
 for kpi, layer, obj, date_expr, org_expr, div_expr, value_expr, extra_where in REGISTRY:
     sql = grouped_sql(obj, date_expr, org_expr, div_expr, value_expr, extra_where)
+    show_sql(sql, f"{kpi} · {layer}")
     try:
         for r in spark.sql(sql).collect():
             val = r["value"] if r["value"] is not None else 0
@@ -668,6 +689,7 @@ banner(
         "(e.g. May 2026 = 3620 for the selected org).",
         "A non-zero diff means the funnel's total_order_items disagrees with the fact -> "
         "check the enquiry_id attribution in sections 9b / 9c."])
+show_sql(reservation_sql, "9. Total Reservation — monthly validation")
 try:
     display(spark.sql(reservation_sql))
 except Exception as e:
@@ -724,6 +746,7 @@ banner(
         "(C4C is retail-focused), not a defect.",
         "Watch the retail/ecom + unattributed cell: retail orders SHOULD attribute, so a large "
         "figure there is real attribution loss -> drill into it in section 9c."])
+show_sql(reservation_attr_sql, "9b. Total Reservation — attribution × channel")
 try:
     display(spark.sql(reservation_attr_sql))
 except Exception as e:
@@ -806,13 +829,16 @@ banner(
         "null enquiry_id / non-numeric token = source-side SAP gap or expected fleet/direct -> "
         "no pipeline fix, note it as known.",
         "The 50-row sample below shows the raw orders for spot-checking individual documents."])
+show_sql(unattributed_rootcause_sql, "9c. Unattributed reservations — root-cause split")
 try:
     display(spark.sql(unattributed_rootcause_sql))
     print()
     banner("9c (detail). Sample of unattributed reservation orders (raw rows, max 50)",
            how_to_read=["Actual sales_ordr_vn_d rows behind the counts above, all attributes."],
            actions=["Spot-check enquiry_id / sales_group / order_type to confirm the root cause."])
-    display(spark.sql(f"SELECT so.* {unattributed_base} LIMIT 50"))
+    _unattr_sample_sql = f"SELECT so.* {unattributed_base} LIMIT 50"
+    show_sql(_unattr_sample_sql, "9c (detail). Sample of unattributed reservation orders")
+    display(spark.sql(_unattr_sample_sql))
 except Exception as e:
     print("Unattributed reservations FAILED —", str(e).splitlines()[0])
 
@@ -883,6 +909,7 @@ banner(
         "If the master-data-gap bucket dominates, go to 10b and generate the enrichment fixes.",
         "Source buckets are not fixable by enrichment — go to 10c for the exact keys to raise with "
         "the org-structure / SAP owners."])
+show_sql(masterdata_overview_sql, "10a. UNKNOWN Sales Office — overview")
 try:
     display(spark.sql(masterdata_overview_sql))
 except Exception as e:
@@ -965,12 +992,14 @@ banner(
         "Then refresh Sales Orders -> Invoices -> _dy -> report and re-run 10a (expect it to shrink).",
         "The detail table below lists each group to drive those fixes.",
         "'Source:' rows here are not enrichment-fixable -> 10c lists their keys to report to source."])
+show_sql(masterdata_rootcause_sql, "10b. UNKNOWN Sales Office — root-cause split")
 try:
     display(spark.sql(masterdata_rootcause_sql))
     print()
     banner("10b (detail). Each UNKNOWN Sales Office group with its classification",
            how_to_read=["One row per (org, division, office) needing attention, most rows first."],
            actions=["Use the 'Fixable' rows to build the UPDATE / INSERT master-data statements."])
+    show_sql(masterdata_detail_sql, "10b (detail). UNKNOWN Sales Office groups")
     display(spark.sql(masterdata_detail_sql))
 except Exception as e:
     print("Master-data root-cause FAILED —", str(e).splitlines()[0])
@@ -1088,12 +1117,14 @@ banner(
         "Org-structure owner: fix the malformed org / unresolved division in eudu_mdata_dtac_orgstrc.",
         "SAP / source system: add the missing office (PAD_100_sales_office_texts) or the office code.",
         "These are NOT enrichment-fixable — do not send them through the 10b UPDATE / INSERT runbook."])
+show_sql(masterdata_source_summary_sql, "10c. Source issues — summary")
 try:
     display(spark.sql(masterdata_source_summary_sql))
     print()
     banner("10c (detail). Each source-issue group with the key to report",
            how_to_read=["One row per (org, division, office) to raise upstream, most rows first."],
            actions=["Quote sales_organization_code · division_code · sales_office_code to the owner."])
+    show_sql(masterdata_source_detail_sql, "10c (detail). Source-issue keys to report")
     display(spark.sql(masterdata_source_detail_sql))
 except Exception as e:
     print("Source-issues report FAILED —", str(e).splitlines()[0])
@@ -1227,7 +1258,9 @@ banner(
 source_id_frames = []
 for label, obj, id_expr, date_expr, org, div, office, extra_where in SOURCE_ID_OBJECTS:
     try:
-        df = spark.sql(_source_id_sql(label, obj, id_expr, date_expr, org, div, office, extra_where))
+        _sid_sql = _source_id_sql(label, obj, id_expr, date_expr, org, div, office, extra_where)
+        show_sql(_sid_sql, f"10d · {label} record ids")
+        df = spark.sql(_sid_sql)
         n = df.count()
         print(f"[{label:<11}] {n} record id(s) recovered from {obj}")
         if n:
@@ -1403,6 +1436,7 @@ def anti_sample(title, left, right, n):
     left_sub = f"(SELECT *, {l_key} AS _key FROM {l_obj} WHERE {l_where}) L"
     right_sub = f"(SELECT DISTINCT {r_key} AS _key FROM {r_obj} WHERE {r_where}) R"
     base = f"FROM {left_sub} LEFT ANTI JOIN {right_sub} ON L._key = R._key"
+    show_sql(f"SELECT L.* {base} LIMIT {n}", title)
     try:
         c = spark.sql(f"SELECT COUNT(*) AS c, COUNT(DISTINCT L._key) AS k {base}").first()
         verdict = "OK - nothing missing" if c["c"] == 0 else f"CHECK - {c['k']} keys to explain"
